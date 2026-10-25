@@ -3,6 +3,7 @@ import { loadGltf } from '../core/assets';
 import { HALF_X, HALF_Z } from '../config';
 import { reefDensity, seabedHeight, seagrassDensity, shoreX, smoothstep } from '../world/seabedProfile';
 import type { ReefMaterials } from './reefMaterials';
+import { HeightField } from '../fauna/heightField';
 import { mulberry32, Occupancy, scatter, type Placement, type ScatterRule } from './scatter';
 
 interface Family {
@@ -11,6 +12,17 @@ interface Family {
   material: THREE.Material;
   rule: ScatterRule;
   castShadow?: boolean;
+  /** Rock: seated on the bare seabed, and becomes ground the corals can settle on. */
+  solid?: boolean;
+  /** Something fish must swim around. */
+  obstacle?: boolean;
+}
+
+export interface ReefSurfaces {
+  /** Seabed plus rock: where things can rest. */
+  terrain: HeightField;
+  /** Terrain plus corals and gorgonians: what swimmers must stay above. */
+  obstacles: HeightField;
 }
 
 export async function variantGeometries(file: string, prefix: string): Promise<THREE.BufferGeometry[]> {
@@ -96,7 +108,7 @@ function seagrassClump(rnd: () => number): THREE.BufferGeometry {
   return geo;
 }
 
-function seagrass(materials: ReefMaterials, rnd: () => number): THREE.InstancedMesh {
+function seagrass(materials: ReefMaterials, rnd: () => number, terrain: HeightField): THREE.InstancedMesh {
   const geo = seagrassClump(rnd);
   const list: Placement[] = [];
   const target = 12000;
@@ -105,6 +117,7 @@ function seagrass(materials: ReefMaterials, rnd: () => number): THREE.InstancedM
     const x = -HALF_X + 0.5 + rnd() * (HALF_X * 2 - 1);
     const z = -HALF_Z + 0.5 + rnd() * (HALF_Z * 2 - 1);
     if (rnd() > seagrassDensity(x, z)) continue;
+    if (terrain.at(x, z) > seabedHeight(x, z) + 0.03) continue;
     const s = 0.75 + rnd() * 0.6;
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * Math.PI * 2);
     list.push({ variant: 0, matrix: new THREE.Matrix4().compose(new THREE.Vector3(x, seabedHeight(x, z) - 0.02, z), q, new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)) });
@@ -112,11 +125,15 @@ function seagrass(materials: ReefMaterials, rnd: () => number): THREE.InstancedM
   return instanced(geo, materials.seagrass(), list, 'seagrass', false);
 }
 
-export async function createReef(materials: ReefMaterials, seed = 4242): Promise<THREE.Group> {
+export async function createReef(materials: ReefMaterials, seed = 4242): Promise<{ group: THREE.Group; surfaces: ReefSurfaces }> {
   const group = new THREE.Group();
   group.name = 'reef';
   const rnd = mulberry32(seed);
   const occ = new Occupancy(2);
+  const rockOcc = new Occupancy(2);
+  const seabed = new HeightField(0.25);
+  const terrain = seabed.clone();
+  const obstacles = seabed.clone();
 
   const submerged = (y: number, min = 0.8) => smoothstep(min, min + 0.6, -y);
   const onReef = (x: number, z: number, sand = 0) => smoothstep(0.3, 0.65, reefDensity(x, z)) + sand;
@@ -131,6 +148,8 @@ export async function createReef(materials: ReefMaterials, seed = 4242): Promise
       file: 'rocks',
       prefix: 'limestone_',
       material: limestone,
+      solid: true,
+      obstacle: true,
       rule: { count: 40, variants: 4, scale: [0.55, 1.15], radius: 1.5, alignToGround: 0.8, sink: 0.25, tilt: 0.12, density: (x, z, y) => onReef(x, z, 0.004) * submerged(y, 0.6) },
     },
     {
@@ -138,44 +157,51 @@ export async function createReef(materials: ReefMaterials, seed = 4242): Promise
       prefix: 'limestone_',
       material: materials.rock('boulder'),
       // Eroded aeolianite boulders straddling the waterline along the beach.
+      solid: true,
+      obstacle: true,
       rule: { count: 9, variants: 3, scale: [0.6, 1.2], radius: 1.6, alignToGround: 0.6, sink: 0.35, tilt: 0.25, region: { x0: -34, x1: -20 }, density: (x, z, y) => smoothstep(1.2, 0.2, Math.abs(y - 0.1)) * 0.5 * (Math.abs(x - shoreX(z)) < 5 ? 1 : 0) },
     },
     {
       file: 'corals',
       prefix: 'star_coral_',
       material: materials.starCoral(),
-      rule: { count: 38, variants: 3, scale: [0.7, 1.3], radius: 1.0, alignToGround: 0.35, sink: 0.12, tilt: 0.1, colors: ['#ffffff', '#e8f0d0', '#f2dcc0', '#d8e4c0'], density: (x, z, y) => onReef(x, z) ** 1.5 * submerged(y, 1.2) },
+      obstacle: true,
+      rule: { maxStep: 0.7, count: 38, variants: 3, scale: [0.7, 1.3], radius: 1.0, alignToGround: 0.35, sink: 0.12, tilt: 0.1, colors: ['#ffffff', '#e8f0d0', '#f2dcc0', '#d8e4c0'], density: (x, z, y) => onReef(x, z) ** 1.5 * submerged(y, 1.2) },
     },
     {
       file: 'corals',
       prefix: 'brain_coral_',
       material: materials.brainCoral(),
-      rule: { count: 70, variants: 3, scale: [0.6, 1.4], radius: 0.6, alignToGround: 0.45, sink: 0.05, tilt: 0.12, colors: ['#ffffff', '#f0e6c0', '#e0ecc8', '#f6d8b0'], density: (x, z, y) => onReef(x, z, 0.004) * submerged(y, 0.9) },
+      obstacle: true,
+      rule: { maxStep: 0.45, count: 70, variants: 3, scale: [0.6, 1.4], radius: 0.6, alignToGround: 0.45, sink: 0.05, tilt: 0.12, colors: ['#ffffff', '#f0e6c0', '#e0ecc8', '#f6d8b0'], density: (x, z, y) => onReef(x, z, 0.004) * submerged(y, 0.9) },
     },
     {
       file: 'gorgonians',
       prefix: 'sea_fan_',
       material: materials.seaFan(),
-      rule: { count: 95, variants: 3, scale: [0.7, 1.3], radius: 0.35, alignToGround: 0.15, tilt: 0.1, yaw: surgeYaw, colors: ['#8a3a8c', '#9b4a9e', '#7a3070', '#a05a9a', '#c8a040'], density: (x, z, y) => onReef(x, z) * submerged(y, 1.0) },
+      obstacle: true,
+      rule: { maxStep: 0.5, baseRadius: 0.05, count: 95, variants: 3, scale: [0.7, 1.3], radius: 0.35, alignToGround: 0.15, tilt: 0.1, yaw: surgeYaw, colors: ['#8a3a8c', '#9b4a9e', '#7a3070', '#a05a9a', '#c8a040'], density: (x, z, y) => onReef(x, z) * submerged(y, 1.0) },
     },
     {
       file: 'gorgonians',
       prefix: 'sea_rod_',
       material: materials.branching(1.0, 0.05),
-      rule: { count: 85, variants: 3, scale: [0.8, 1.3], radius: 0.3, alignToGround: 0.1, tilt: 0.12, colors: ['#6b4a3a', '#7a5a48', '#5a3d4a', '#8a6a50'], density: (x, z, y) => onReef(x, z, 0.006) * submerged(y, 1.0) },
+      obstacle: true,
+      rule: { maxStep: 0.5, baseRadius: 0.05, count: 85, variants: 3, scale: [0.8, 1.3], radius: 0.3, alignToGround: 0.1, tilt: 0.12, colors: ['#6b4a3a', '#7a5a48', '#5a3d4a', '#8a6a50'], density: (x, z, y) => onReef(x, z, 0.006) * submerged(y, 1.0) },
     },
     {
       file: 'gorgonians',
       prefix: 'sea_plume_',
       material: materials.branching(1.2, 0.1),
-      rule: { count: 40, variants: 2, scale: [0.8, 1.2], radius: 0.35, alignToGround: 0.1, tilt: 0.1, colors: ['#9a7aa0', '#8a6a58', '#b09ab8'], density: (x, z, y) => onReef(x, z) * submerged(y, 1.6) },
+      obstacle: true,
+      rule: { maxStep: 0.5, baseRadius: 0.05, count: 40, variants: 2, scale: [0.8, 1.2], radius: 0.35, alignToGround: 0.1, tilt: 0.1, colors: ['#9a7aa0', '#8a6a58', '#b09ab8'], density: (x, z, y) => onReef(x, z) * submerged(y, 1.6) },
     },
     {
       file: 'rocks',
       prefix: 'cobble_',
       material: limestone,
       castShadow: false,
-      rule: { count: 170, variants: 2, scale: [0.6, 1.5], radius: 0.25, alignToGround: 1, sink: 0.06, density: (x, z, y) => (onReef(x, z) * 0.6 + smoothstep(0.1, 0.35, reefDensity(x, z)) * 0.4 + 0.004) * submerged(y, 0.3) },
+      rule: { maxStep: 0.3, count: 170, variants: 2, scale: [0.6, 1.5], radius: 0.25, alignToGround: 1, sink: 0.06, density: (x, z, y) => (onReef(x, z) * 0.6 + smoothstep(0.1, 0.35, reefDensity(x, z)) * 0.4 + 0.004) * submerged(y, 0.3) },
     },
     {
       file: 'shore_plants',
@@ -201,13 +227,17 @@ export async function createReef(materials: ReefMaterials, seed = 4242): Promise
   );
 
   families.forEach((f, fi) => {
-    const placements = scatter(f.rule, rnd, occ);
+    const placements = scatter(f.rule, rnd, f.solid ? rockOcc : occ, f.solid ? seabed : terrain);
     const variants = geos[fi];
+    for (const p of placements) {
+      if (f.solid) terrain.splat(variants[p.variant], p.matrix);
+      if (f.obstacle) obstacles.splat(variants[p.variant], p.matrix);
+    }
     variants.forEach((geo, vi) => {
       const list = placements.filter((p) => p.variant === vi);
       if (list.length) group.add(instanced(geo, f.material, list, `${f.prefix}${vi}`, f.castShadow ?? true));
     });
   });
-  group.add(seagrass(materials, rnd));
-  return group;
+  group.add(seagrass(materials, rnd, terrain));
+  return { group, surfaces: { terrain, obstacles } };
 }

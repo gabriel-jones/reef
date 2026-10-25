@@ -30,8 +30,9 @@ type FloatNode = THREE.Node<'float'>;
 const loader = new THREE.TextureLoader();
 const base = `${import.meta.env.BASE_URL}assets/textures/`;
 
-function load(name: string, srgb = false): THREE.Texture {
+function load(name: string, srgb = false, flipY = true): THREE.Texture {
   const t = loader.load(`${base}${name}.webp`);
+  t.flipY = flipY;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.anisotropy = 8;
@@ -93,7 +94,8 @@ export class ReefMaterials {
     brainNor: load('brain_nor'),
     starMask: load('star_mask'),
     starNor: load('star_nor'),
-    seafan: load('seafan'),
+    // Sampled with glTF UVs (v = 0 at the top of the image), unlike the triplanar maps.
+    seafan: load('seafan', false, false),
   };
 
   constructor(private underwater: UnderwaterLighting) {}
@@ -169,7 +171,7 @@ export class ReefMaterials {
     const lattice = texture(this.tex.seafan, uv());
     mat.colorNode = mix(float(0.72), float(1.05), lattice.r).mul(mix(float(1), float(1.2), lattice.g));
     mat.opacityNode = lattice.a;
-    mat.positionNode = positionLocal.add(this.surgeOffset(pow(uv().y, 1.6), 0.07));
+    mat.positionNode = positionLocal.add(this.surgeOffset(pow(uv().y.oneMinus(), 1.6), 0.07));
     return this.finish(mat);
   }
 

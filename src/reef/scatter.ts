@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { HALF_X, HALF_Z } from '../config';
 import { seabedHeight } from '../world/seabedProfile';
+import type { HeightField } from '../fauna/heightField';
 
 export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -75,11 +76,38 @@ export interface ScatterRule {
   colors?: THREE.ColorRepresentation[];
   region?: { x0: number; x1: number; z0?: number; z1?: number };
   margin?: number;
+  /** Skip spots whose footprint varies by more than this in height (m per unit scale); default ∞. */
+  maxStep?: number;
+  /** Radius of the part that actually touches the ground, when narrower than the footprint (m at scale 1). */
+  baseRadius?: number;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
+const _rim = new THREE.Vector3();
 
-export function scatter(rule: ScatterRule, rnd: () => number, occ: Occupancy): Placement[] {
+const RING = 8;
+
+/** Samples the surface under a footprint of radius r; returns the centre height, spread and best-fit normal. */
+function footprint(surface: HeightField, x: number, z: number, r: number): { centre: number; spread: number; normal: THREE.Vector3 } {
+  const centre = surface.at(x, z);
+  let min = centre;
+  let max = centre;
+  let gx = 0;
+  let gz = 0;
+  for (let k = 0; k < RING; k++) {
+    const a = (k / RING) * Math.PI * 2;
+    const h = surface.at(x + Math.cos(a) * r, z + Math.sin(a) * r);
+    min = Math.min(min, h);
+    max = Math.max(max, h);
+    gx += Math.cos(a) * h;
+    gz += Math.sin(a) * h;
+  }
+  // Least-squares plane slope from the ring samples.
+  const k = 2 / (RING * r);
+  return { centre, spread: max - min, normal: new THREE.Vector3(-gx * k, 1, -gz * k).normalize() };
+}
+
+export function scatter(rule: ScatterRule, rnd: () => number, occ: Occupancy, surface?: HeightField): Placement[] {
   const out: Placement[] = [];
   const margin = rule.margin ?? 0.8;
   const region = rule.region ?? { x0: -HALF_X, x1: HALF_X };
@@ -95,14 +123,22 @@ export function scatter(rule: ScatterRule, rnd: () => number, occ: Occupancy): P
   for (let attempt = 0; attempt < rule.count * 60 && out.length < rule.count; attempt++) {
     const x = x0 + rnd() * (x1 - x0);
     const z = z0 + rnd() * (z1 - z0);
-    const y = seabedHeight(x, z);
+    let y = surface ? surface.at(x, z) : seabedHeight(x, z);
     if (rnd() > rule.density(x, z, y)) continue;
     const s = rule.scale[0] + rnd() * (rule.scale[1] - rule.scale[0]);
     const r = rule.radius * s;
     if (r > 0 && !occ.free(x, z, r)) continue;
+
+    const ringR = Math.max(r * 0.85, 0.12);
+    let n: THREE.Vector3;
+    if (surface) {
+      const f = footprint(surface, x, z, ringR);
+      if (f.spread > (rule.maxStep ?? Infinity) * s) continue;
+      y = f.centre;
+      n = f.normal;
+    } else n = groundNormal(x, z, Math.max(r * 0.6, 0.25));
     if (r > 0) occ.add(x, z, r);
 
-    const n = groundNormal(x, z, Math.max(r * 0.6, 0.25));
     const up = UP.clone().lerp(n, rule.alignToGround).normalize();
     q.setFromUnitVectors(UP, up);
     const tilt = rule.tilt ?? 0;
@@ -113,6 +149,16 @@ export function scatter(rule: ScatterRule, rnd: () => number, occ: Occupancy): P
     yawQ.setFromAxisAngle(UP, rule.yaw ? rule.yaw(x, z, rnd) : rnd() * Math.PI * 2);
     q.multiply(yawQ);
 
+    if (surface) {
+      // Drop until no point of the (tilted) base rim is left above the surface.
+      const baseR = rule.baseRadius !== undefined ? rule.baseRadius * s : ringR;
+      y = surface.at(x, z);
+      for (let k = 0; k < RING; k++) {
+        const a = (k / RING) * Math.PI * 2;
+        const rim = _rim.set(Math.cos(a) * baseR, 0, Math.sin(a) * baseR).applyQuaternion(q);
+        y = Math.min(y, surface.at(x + rim.x, z + rim.z) - rim.y);
+      }
+    }
     const pos = new THREE.Vector3(x, y - (rule.sink ?? 0) * s, z);
     const matrix = new THREE.Matrix4().compose(pos, q, new THREE.Vector3(s, s, s));
     const color = palette ? palette[Math.floor(rnd() * palette.length)].clone().offsetHSL((rnd() - 0.5) * 0.03, (rnd() - 0.5) * 0.1, (rnd() - 0.5) * 0.08) : undefined;

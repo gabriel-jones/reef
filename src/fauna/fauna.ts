@@ -2,11 +2,11 @@ import * as THREE from 'three/webgpu';
 import { loadGltf } from '../core/assets';
 import { HALF_X, HALF_Z } from '../config';
 import { PATCH_REEFS, reefDensity } from '../world/seabedProfile';
-import { variantGeometries } from '../reef/reef';
+import { variantGeometries, type ReefSurfaces } from '../reef/reef';
 import { mulberry32 } from '../reef/scatter';
 import type { UnderwaterLighting } from '../underwater/underwaterLighting';
 import { FaunaMaterials, loadVat, type Swimmer } from './faunaMaterials';
-import { HeightField } from './heightField';
+import type { HeightField } from './heightField';
 
 const SURFACE_CLEARANCE = 0.45;
 const WALL = 1.2;
@@ -68,17 +68,38 @@ function newAgent(pos: THREE.Vector3, group: number, scale: number, rnd: () => n
   return { pos, vel: dir.clone().multiplyScalar(0.1), dir, target: pos.clone(), timer: 0, group, scale, phase: rnd() * 6.28, roll: 0, pause: 0 };
 }
 
-/** Soft boundaries: walls, surface, seabed. Returns a steering acceleration. */
-function bounds(p: THREE.Vector3, h: HeightField, clearance: number, out: THREE.Vector3): THREE.Vector3 {
+/**
+ * Soft boundaries: walls, surface, and everything solid below. With a velocity and look-ahead time it
+ * also feels for reef rising ahead and steers up and around it. Returns a steering acceleration.
+ */
+function bounds(p: THREE.Vector3, h: HeightField, clearance: number, out: THREE.Vector3, vx = 0, vz = 0, look = 0): THREE.Vector3 {
   out.set(0, 0, 0);
   const lim = (v: number, half: number) => (v > half - WALL ? -(v - half + WALL) : v < -half + WALL ? -half + WALL - v : 0);
   out.x = lim(p.x, HALF_X) * 3;
   out.z = lim(p.z, HALF_Z) * 3;
   const bed = h.at(p.x, p.z) + clearance;
   if (p.y < bed) out.y += (bed - p.y) * 6;
+  if (look > 0) {
+    const ax = p.x + vx * look;
+    const az = p.z + vz * look;
+    const block = h.at(ax, az) + clearance - p.y;
+    if (block > 0) {
+      const e = 0.25;
+      const gx = (h.at(ax + e, az) - h.at(ax - e, az)) / (2 * e);
+      const gz = (h.at(ax, az + e) - h.at(ax, az - e)) / (2 * e);
+      out.x -= gx * block * 4;
+      out.z -= gz * block * 4;
+      out.y += block * 5;
+    }
+  }
   const top = -SURFACE_CLEARANCE;
   if (p.y > top) out.y -= (p.y - top) * 6;
   return out;
+}
+
+/** Lowest a body may sit: clear of whatever is under its head, middle and tail. */
+function floorUnder(h: HeightField, x: number, z: number, dx: number, dz: number, half: number, clearance: number): number {
+  return Math.max(h.at(x, z), h.at(x + dx * half, z + dz * half), h.at(x - dx * half, z - dz * half)) + clearance;
 }
 
 /** Orientation from heading with limited pitch and a bank into turns. */
@@ -247,12 +268,17 @@ class ReefSchool extends FishSchool {
           a.pause = 0;
         }
       }
-      acc.add(bounds(a.pos, this.h, 0.12, _w));
+      acc.add(bounds(a.pos, this.h, 0.12, _w, a.vel.x, a.vel.z, 0.8));
 
       a.vel.addScaledVector(acc, dt);
       const sp2 = a.vel.length();
       if (sp2 > sp.maxSpeed) a.vel.multiplyScalar(sp.maxSpeed / sp2);
       a.pos.addScaledVector(a.vel, dt);
+      const floor = floorUnder(this.h, a.pos.x, a.pos.z, a.dir.x, a.dir.z, this.length * a.scale * 0.5, 0.05);
+      if (a.pos.y < floor) {
+        a.pos.y = floor;
+        if (a.vel.y < 0) a.vel.y = 0;
+      }
       this.steerHeading(a, dt);
       // grazers tip nose-down onto the rock
       if (a.pause > 0) a.dir.y += (-0.9 - a.dir.y) * (1 - Math.exp(-dt * 3));
@@ -407,7 +433,7 @@ class BaitSchool extends FishSchool {
         }
       }
       _v.set(px, py, pz);
-      bounds(_v, this.h, 0.5, _w);
+      bounds(_v, this.h, 0.5, _w, vx, vz, 0.7);
       fx += _w.x; fy += _w.y; fz += _w.z;
       const s = Math.sqrt(vx * vx + vy * vy + vz * vz);
       if (s < cruise && s > 1e-4) {
@@ -420,8 +446,14 @@ class BaitSchool extends FishSchool {
         const w = maxSpeed / s2;
         vx *= w; vy *= w; vz *= w;
       }
+      let ny = py + vy * dt;
+      const floor = this.h.at(px + vx * dt, pz + vz * dt) + 0.15;
+      if (ny < floor) {
+        ny = floor;
+        if (vy < 0) vy = 0;
+      }
       v[o] = vx; v[o + 1] = vy; v[o + 2] = vz;
-      p[o] = px + vx * dt; p[o + 1] = py + vy * dt; p[o + 2] = pz + vz * dt;
+      p[o] = px + vx * dt; p[o + 1] = ny; p[o + 2] = pz + vz * dt;
 
       const a = this.agents[i];
       a.pos.set(p[o], p[o + 1], p[o + 2]);
@@ -451,7 +483,7 @@ class Cruiser {
   timer = 0;
   speed: number;
 
-  constructor(geo: THREE.BufferGeometry, private swimmer: Swimmer, readonly cruise: number, private strokeSpeed: number) {
+  constructor(geo: THREE.BufferGeometry, private swimmer: Swimmer, readonly cruise: number, private strokeSpeed: number, private readonly length: number) {
     this.mesh = new THREE.Mesh(geo, swimmer.material);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
@@ -464,9 +496,14 @@ class Cruiser {
     _v.subVectors(this.target, this.pos);
     const dist = _v.length();
     const desired = dist > 1e-4 ? _v.multiplyScalar(Math.min(this.speed, dist * 0.8 + 0.05) / dist) : _v.set(0, 0, 0);
-    const acc = desired.sub(this.vel).multiplyScalar(turnRate).add(bounds(this.pos, h, clearance, _w));
+    const acc = desired.sub(this.vel).multiplyScalar(turnRate).add(bounds(this.pos, h, clearance, _w, this.vel.x, this.vel.z, 1.4));
     this.vel.addScaledVector(acc, dt);
     this.pos.addScaledVector(this.vel, dt);
+    const floor = floorUnder(h, this.pos.x, this.pos.z, this.dir.x, this.dir.z, this.length * 0.5, clearance * 0.4);
+    if (this.pos.y < floor) {
+      this.pos.y = floor;
+      if (this.vel.y < 0) this.vel.y = 0;
+    }
     const sp = this.vel.length();
     if (sp > 0.02) {
       _v.copy(this.vel).divideScalar(sp);
@@ -513,10 +550,11 @@ export interface Fauna {
   emit(fn: (x: number, y: number, z: number, speed: number, size: number, dt: number) => void, dt: number): void;
 }
 
-export async function createFauna(underwater: UnderwaterLighting, seed = 777): Promise<Fauna> {
+export async function createFauna(underwater: UnderwaterLighting, surfaces: ReefSurfaces, seed = 777): Promise<Fauna> {
   const rnd = mulberry32(seed);
   const mats = new FaunaMaterials(underwater);
-  const h = new HeightField();
+  const h = surfaces.obstacles;
+  const ground = surfaces.terrain;
   const reefs = fishReefs(h);
   const group = new THREE.Group();
   group.name = 'fauna';
@@ -537,7 +575,7 @@ export async function createFauna(underwater: UnderwaterLighting, seed = 777): P
 
   // Great barracuda: hang motionless high in the water column, cruise slowly, now and then rush the bait.
   const barracuda = [0, 1].map((k) => {
-    const c = new Cruiser(barracudaGeo, mats.vat(barracudaVat, { name: 'barracuda', metal: true }), 0.35, 1.0);
+    const c = new Cruiser(barracudaGeo, mats.vat(barracudaVat, { name: 'barracuda', metal: true }), 0.35, 1.0, 1.3);
     c.pos.set(18 + k * 8, -1.6, -4 + k * 10);
     c.target.copy(c.pos);
     c.mesh.name = `barracuda-${k}`;
@@ -545,7 +583,7 @@ export async function createFauna(underwater: UnderwaterLighting, seed = 777): P
     return c;
   });
   // Green turtle: a long loop around the lagoon at a few metres, surfacing to breathe every minute or so.
-  const turtle = new Cruiser(turtleGeo, mats.vat(turtleVat, { texture: 'turtle' }), 0.42, 1.0);
+  const turtle = new Cruiser(turtleGeo, mats.vat(turtleVat, { texture: 'turtle' }), 0.42, 1.0, 1.0);
   turtle.pos.set(-4, -2.4, 8);
   turtle.mesh.name = 'turtle';
   group.add(turtle.mesh);
@@ -566,11 +604,12 @@ export async function createFauna(underwater: UnderwaterLighting, seed = 777): P
     const x = reef.x + Math.cos(a) * r;
     const z = reef.z + Math.sin(a) * r;
     const d = reefDensity(x, z);
-    if (d < 0.25 || d > 0.7 || h.at(x, z) > -1.8) continue;
+    // On open rock or sand, not perched on a coral head.
+    if (d < 0.25 || d > 0.7 || ground.at(x, z) > -1.8 || h.at(x, z) > ground.at(x, z) + 0.05) continue;
     const yaw = Math.atan2(Math.cos(a), Math.sin(a)) + (rnd() - 0.5) * 0.8;
     _q.setFromAxisAngle(UP, yaw);
     const s = 0.8 + rnd() * 0.45;
-    lobsterLists[placed % lobsterGeos.length].push(new THREE.Matrix4().compose(new THREE.Vector3(x, h.at(x, z) - 0.01, z), _q, _s.setScalar(s)));
+    lobsterLists[placed % lobsterGeos.length].push(new THREE.Matrix4().compose(new THREE.Vector3(x, ground.at(x, z) - 0.01, z), _q, _s.setScalar(s)));
     placed++;
   }
   lobsterGeos.forEach((geo, i) => {

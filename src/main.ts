@@ -65,12 +65,16 @@ async function main(): Promise<void> {
   scene.add(seabed, ocean.group, createFrame(), snow, bio.sprite);
   pipeline.outputNode = post.build(scenePass);
 
-  createReef(reefMaterials).then((reef) => scene.add(reef));
   let fauna: Fauna | null = null;
-  createFauna(underwater).then((f) => {
-    fauna = f;
-    scene.add(f.group);
-  });
+  createReef(reefMaterials)
+    .then(({ group, surfaces }) => {
+      scene.add(group);
+      return createFauna(underwater, surfaces);
+    })
+    .then((f) => {
+      fauna = f;
+      scene.add(f.group);
+    });
 
   const resolution = new ResolutionController(renderer);
   const hud = new PerfHud(renderer);
