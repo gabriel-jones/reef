@@ -5,6 +5,9 @@ import type { PerfHud } from '../core/perfHud';
 import type { SkyAndSun } from '../world/sky';
 import type { OceanSim } from '../ocean/oceanSim';
 import type { OceanSurface } from '../ocean/oceanSurface';
+import type { UnderwaterLighting } from '../underwater/underwaterLighting';
+import type { UnderwaterPost } from '../underwater/underwaterPost';
+import type { Caustics } from '../underwater/caustics';
 
 export function createGui(opts: {
   renderer: THREE.WebGPURenderer;
@@ -13,9 +16,12 @@ export function createGui(opts: {
   sky: SkyAndSun;
   oceanSim: OceanSim;
   ocean: OceanSurface;
+  underwater: UnderwaterLighting;
+  post: UnderwaterPost;
+  caustics: Caustics;
 }): GUI {
   const gui = new GUI({ title: 'Reef' });
-  const { renderer, resolution, hud, sky, oceanSim, ocean } = opts;
+  const { renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics } = opts;
 
   const sun = gui.addFolder('Sun');
   sun.add(sky.state, 'elevation', -10, 90, 0.1).onChange(() => sky.update());
@@ -58,6 +64,19 @@ export function createGui(opts: {
   water.add(ocean.look.roughness, 'value', 0.005, 0.4, 0.001).name('roughness');
   water.add(ocean.look.sssStrength, 'value', 0, 4, 0.01).name('crest glow');
 
+  const under = gui.addFolder('Underwater');
+  under.add(underwater.causticStrength, 'value', 0, 3, 0.01).name('caustics');
+  under.add(caustics.focusDepth[0], 'value', 1, 40, 0.1).name('caustic focus m');
+  under.add(caustics.focusDepth[1], 'value', 0.5, 15, 0.1).name('ripple focus m');
+  under.add(post.godRays, 'value', 0, 3, 0.01).name('god rays');
+  under.add(post.scatter, 'value', 0, 0.3, 0.001).name('turbidity');
+  under.add(post.fogColor.value, 'x', 0, 0.5, 0.001).name('fog R');
+  under.add(post.fogColor.value, 'y', 0, 0.5, 0.001).name('fog G');
+  under.add(post.fogColor.value, 'z', 0, 0.5, 0.001).name('fog B');
+  under.add(post.debug, 'value', { final: 0, mask: 1, transmittance: 2, inscatter: 3, distance: 4 }).name('debug');
+  under.add(ocean.swashHeight, 'value', 0, 0.5, 0.01).name('swash height');
+  under.add(ocean.swashSpeed, 'value', 0, 2, 0.01).name('swash speed');
+
   const render = gui.addFolder('Render');
   render.add(renderer, 'toneMappingExposure', 0.05, 3, 0.01).name('exposure').listen();
   render.add(resolution, 'enabled').name('auto resolution');
@@ -72,6 +91,6 @@ export function createGui(opts: {
   render.add(hudProxy, 'perfHud').name('perf HUD').onChange((v: boolean) => (hud.visible = v));
   setInterval(() => (scaleProxy.scale = resolution.scale), 500);
 
-  for (const f of [waves, foam, water]) f.close();
+  for (const f of [waves, foam, water, under]) f.close();
   return gui;
 }

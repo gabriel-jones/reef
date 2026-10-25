@@ -33,6 +33,8 @@ import {
   smoothstep,
   select,
   length,
+  refract,
+  sin,
   time,
   PI,
 } from 'three/tsl';
@@ -49,6 +51,7 @@ type Vec3Node = THREE.Node<'vec3'>;
 type Vec4Node = THREE.Node<'vec4'>;
 
 const SURFACE_SPACING = 1 / 6;
+const IOR_WATER = 1.333;
 const EDGE_FADE = 2;
 
 export const DEFAULT_LOOK = {
@@ -69,6 +72,8 @@ interface FieldSample {
   atten: FloatNode;
   /** Final world-space displacement (attenuated, wall-masked). */
   offset: Vec3Node;
+  /** Shore run-up height added to the waterline. */
+  swash: FloatNode;
 }
 
 /**
@@ -89,6 +94,8 @@ export class OceanSurface {
   readonly shoalDepth = uniform(2.8);
   /** 0 shaded, 1 transmitted, 2 reflection, 3 normals, 4 foam. */
   readonly debugView = uniform(0, 'int');
+  readonly swashHeight = uniform(0.18);
+  readonly swashSpeed = uniform(0.42);
 
   private foamTex = createFoamTexture();
 
@@ -110,7 +117,7 @@ export class OceanSurface {
 
   // ---------------------------------------------------------------- wave field
 
-  private sampleField(xz: Vec2Node): FieldSample {
+  sampleField(xz: Vec2Node): FieldSample {
     let raw: Vec4Node = vec4(0);
     CASCADES.forEach((c, i) => {
       raw = raw.add(texture(this.sim.displacement[i], xz.div(c.size)).level(float(0)));
@@ -122,8 +129,26 @@ export class OceanSurface {
     // Horizontal displacement normal to each wall fades to zero so the surface edge stays on the wall plane.
     const mx = smoothstep(HALF_X, HALF_X - EDGE_FADE, abs(xz.x));
     const mz = smoothstep(HALF_Z, HALF_Z - EDGE_FADE, abs(xz.y));
-    const offset = vec3(raw.x.mul(mx), raw.y, raw.z.mul(mz)).mul(atten);
-    return { raw, restDepth, atten, offset };
+    const swash = this.swashAt(xz, restDepth);
+    const offset = vec3(raw.x.mul(mx), raw.y, raw.z.mul(mz)).mul(atten).add(vec3(0, swash, 0));
+    return { raw, restDepth, atten, offset, swash };
+  }
+
+  /** Run-up on the beach: the waterline climbs and retreats with each swell set. */
+  private swashAt(xz: Vec2Node, restDepth: FloatNode): FloatNode {
+    const band = smoothstep(-1.4, -0.3, restDepth).mul(smoothstep(1.2, 0.2, restDepth));
+    const phase = time.mul(this.swashSpeed).add(xz.y.mul(0.09)).add(sin(xz.y.mul(0.23).add(time.mul(0.13))).mul(1.4));
+    const surge = pow(sin(phase).mul(0.5).add(0.5), 1.6);
+    return band.mul(surge).mul(this.swashHeight).toVar();
+  }
+
+  seabedHeightAt(xz: Vec2Node): FloatNode {
+    return this.seabed.heightAt(xz);
+  }
+
+  /** TSL: water surface height (world Y) at a rest position. Ignores horizontal displacement. */
+  heightAt(xz: Vec2Node): FloatNode {
+    return this.sampleField(xz).offset.y.add(WORLD.seaLevel);
   }
 
   // ---------------------------------------------------------------- geometry
@@ -186,23 +211,16 @@ export class OceanSurface {
    * Light arriving back through the water from what lies behind it: Beer–Lambert transmittance
    * of the opaque scene plus in-scattered water colour along the view path.
    */
-  private transmitted(uvNode: Vec2Node, surfaceY: FloatNode, down: Vec3Node): Vec3Node {
+  private transmitted(uvNode: Vec2Node, down: Vec3Node): Vec3Node {
+    // Submerged materials already carry the sun-path falloff (UnderwaterLighting); only the view path remains.
     const sceneViewZ = perspectiveDepthToViewZ(viewportDepthTexture(uvNode), cameraNear, cameraFar);
     const viewZ = positionView.z;
     const thickness = max(viewZ.sub(sceneViewZ), 0);
     const viewPath = thickness.mul(length(positionView)).div(max(viewZ.negate(), 1e-3)).toVar();
-
-    // Sunlight also travelled down to the hit point before bouncing back up toward us.
-    const viewDir = normalize(positionWorld.sub(cameraPosition));
-    const hitY = positionWorld.y.add(viewDir.y.mul(viewPath));
-    const sunPath = max(surfaceY.sub(hitY), 0).div(max(this.sky.lut.sunDir.y, 0.25));
-
-    const sigma = this.look.absorption;
-    const tView = exp(sigma.mul(viewPath).negate());
-    const tTotal = exp(sigma.mul(viewPath.add(sunPath)).negate());
+    const tView = exp(this.look.absorption.mul(viewPath).negate());
     const scene = viewportSharedTexture(uvNode).rgb;
     const inscatter = this.look.deepColor.mul(down).div(PI).mul(vec3(1).sub(tView));
-    return scene.mul(tTotal).add(inscatter);
+    return scene.mul(tView).add(inscatter);
   }
 
   // ---------------------------------------------------------------- materials
@@ -215,6 +233,7 @@ export class OceanSurface {
     const vRaw = varying(field.raw, 'vOceanRaw');
     const vDepth = varying(field.restDepth, 'vOceanDepth');
     const vAtten = varying(field.atten, 'vOceanAtten');
+    const vSwash = varying(field.swash, 'vOceanSwash');
     const vZenith = varying(this.skyAt(vec3(0, 1, 0)), 'vSkyZenith');
 
     mat.colorNode = Fn(() => {
@@ -258,7 +277,7 @@ export class OceanSurface {
       const refrUV = screenUV.add(N.xz.mul(this.look.refraction).div(viewDepth));
       const refrViewZ = perspectiveDepthToViewZ(viewportDepthTexture(refrUV), cameraNear, cameraFar);
       const uvFinal = select(refrViewZ.lessThan(positionView.z), refrUV, screenUV);
-      const below = this.transmitted(uvFinal, positionWorld.y, down).toVar();
+      const below = this.transmitted(uvFinal, down).toVar();
 
       // Subsurface glow through sunlit wave crests.
       const heightNow = vRaw.y;
@@ -272,7 +291,8 @@ export class OceanSurface {
 
       // Foam: Jacobian whitecaps, shore swash, and whitewater over the boiler reef.
       const depth = vDepth;
-      const shore = smoothstep(0.55, 0.05, depth.add(heightNow.mul(atten)));
+      // Swash: foam is thickest at the leading edge of the run-up and thins as it drains.
+      const shore = smoothstep(0.55, 0.05, depth.add(heightNow.mul(atten)).add(vSwash)).mul(float(0.55).add(vSwash.div(this.swashHeight).mul(0.45)));
       // Swell trips over the boiler rim: whitewater pulses with the unattenuated wave height.
       const drift = vec2(time.mul(0.011), time.mul(0.007));
       const coarse = texture(this.foamTex, xz.mul(0.045).add(drift)).r;
@@ -300,9 +320,17 @@ export class OceanSurface {
         select(dbg.equal(2), reflection.mul(fresnel), select(dbg.equal(3), N.mul(0.5).add(0.5), select(dbg.equal(4), vec3(foamMask), shaded))),
       );
 
-      // Viewed from below (through the front wall): a dim, sky-tinted underside until Phase 2 adds Snell's window.
-      const underside = this.look.deepColor.mul(down).div(PI).mul(1.4).add(below.mul(0.35));
-      return vec4(select(frontFacing, lit, underside), 1);
+      // From below: Snell's window. Inside the ~48.6° cone the sky refracts through; outside it, total
+      // internal reflection mirrors the dim water column back down.
+      const T = refract(V.negate(), N, float(IOR_WATER)).toVar();
+      const throughWindow = dot(T, T).greaterThan(1e-4);
+      const cosT = max(dot(V, N), 0);
+      const fresnelUp = float(0.02).add(float(0.98).mul(pow(float(1).sub(cosT), 5)));
+      const skyThrough = this.skyAt(T).add(this.sky.sunRadiance.mul(pow(max(dot(T, L), 0), 900).mul(60)));
+      const mirrored = this.look.deepColor.mul(down).div(PI).mul(1.9);
+      const window = mix(skyThrough.mul(0.9), mirrored, fresnelUp.min(1));
+      const underFoam = mix(select(throughWindow, window, mirrored), foamLight.mul(0.5), foamOpacity.mul(0.7));
+      return vec4(select(frontFacing, lit, underFoam), 1);
     })();
 
     return mat;
@@ -325,10 +353,9 @@ export class OceanSurface {
       const V = normalize(cameraPosition.sub(positionWorld));
       const down = this.downwelling(vZenith);
       const depthBelow = max(vSurfaceY.sub(positionWorld.y), 0);
-      const below = this.transmitted(screenUV, vSurfaceY, down);
-      // Light reaching this depth inside the volume dims the in-scatter.
-      const dimming = exp(this.look.absorption.mul(depthBelow).mul(0.6).negate());
-      const volume = below.mul(mix(vec3(1), dimming, 0.5));
+      // In-scatter deeper in the volume is fed by light that has already been absorbed on the way down.
+      const dimming = exp(this.look.absorption.mul(depthBelow).mul(0.5).negate());
+      const volume = this.transmitted(screenUV, down.mul(dimming));
 
       // Thin acrylic: a faint Fresnel sheen and a bright meniscus line at the waterline.
       const nWall = normalize(attribute<'vec3'>('normal', 'vec3'));

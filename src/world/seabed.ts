@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { color, mix, positionWorld, smoothstep, sin, float, normalWorld, abs } from 'three/tsl';
 import { HALF_X, HALF_Z, WORLD } from '../config';
 import { seabedHeight } from './seabedProfile';
+import type { UnderwaterLighting } from '../underwater/underwaterLighting';
 
 const SEG_PER_METRE = 3;
 
@@ -52,19 +53,24 @@ function buildSkirt(): THREE.BufferGeometry {
   return geo;
 }
 
-export function createSeabed(): THREE.Group {
+export function createSeabed(underwater: UnderwaterLighting): THREE.Group {
   const group = new THREE.Group();
   group.name = 'seabed';
 
   const y = positionWorld.y;
 
-  const topMat = new THREE.MeshStandardNodeMaterial({ roughness: 0.92 });
+  const topMat = new THREE.MeshStandardNodeMaterial();
   const drySand = color(0xf3d9cf);
-  const wetSand = color(0xd9b3a5);
-  const deepSand = color(0xcfc2ae);
-  const sandByHeight = mix(mix(deepSand, wetSand, smoothstep(-4, -0.2, y)), drySand, smoothstep(0.1, 0.6, y));
+  const shallowSand = color(0xeacfc2);
+  const deepSand = color(0xd8c9b6);
+  const sandByHeight = mix(deepSand, shallowSand, smoothstep(-5, -0.5, y));
+  // The swash zone stays damp: darker, glossier sand just above the waterline.
+  const wet = smoothstep(0.42, 0.12, y).mul(smoothstep(-0.4, 0.05, y));
+  const surface = mix(mix(sandByHeight, drySand, smoothstep(0.0, 0.5, y)), color(0xc9a597), wet.mul(0.7));
   const steep = float(1).sub(abs(normalWorld.y)).mul(4).clamp(0, 1);
-  topMat.colorNode = mix(sandByHeight, color(0xa79d8a), steep);
+  topMat.colorNode = mix(surface, color(0xa79d8a), steep);
+  topMat.roughnessNode = mix(float(0.93), float(0.38), wet);
+  underwater.apply(topMat);
 
   const skirtMat = new THREE.MeshStandardNodeMaterial({ roughness: 1 });
   const strata = sin(y.mul(3.1).add(sin(positionWorld.x.mul(0.21).add(positionWorld.z.mul(0.17))).mul(0.8))).mul(0.5).add(0.5);
