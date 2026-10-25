@@ -71,7 +71,20 @@ async function main(): Promise<void> {
 
   const resolution = new ResolutionController(renderer);
   const hud = new PerfHud(renderer);
-  createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
+  const gui = createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
+  // Dev tools stay out of the way: ?dev in the URL, or the backquote key, toggles them.
+  let dev = new URLSearchParams(location.search).has('dev');
+  const showDev = () => {
+    gui.show(dev);
+    hud.visible = dev;
+  };
+  showDev();
+  window.addEventListener('keydown', (e) => {
+    if (e.key === '`') {
+      dev = !dev;
+      showDev();
+    }
+  });
 
   // Double-click the seabed to orbit around that spot; zooming in from there dives under.
   const raycaster = new THREE.Raycaster();
