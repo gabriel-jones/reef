@@ -8,7 +8,6 @@ import { createSeabed } from './world/seabed';
 import { SeabedMap } from './world/seabedMap';
 import { createFrame } from './world/frame';
 import { createGui } from './ui/gui';
-import { loadModel } from './core/assets';
 import { seabedHeight } from './world/seabedProfile';
 import { DEFAULT_OCEAN } from './ocean/params';
 import { OceanSim } from './ocean/oceanSim';
@@ -18,6 +17,8 @@ import { Caustics } from './underwater/caustics';
 import { UnderwaterLighting } from './underwater/underwaterLighting';
 import { UnderwaterPost } from './underwater/underwaterPost';
 import { createMarineSnow } from './underwater/marineSnow';
+import { ReefMaterials } from './reef/reefMaterials';
+import { createReef } from './reef/reef';
 
 const CAMERA_CLEARANCE = 0.45;
 
@@ -55,15 +56,12 @@ async function main(): Promise<void> {
   const probe = new OceanProbe(ocean);
   const snow = createMarineSnow(sky, ocean);
 
-  const seabed = createSeabed(underwater);
+  const reefMaterials = new ReefMaterials(underwater);
+  const seabed = createSeabed(underwater, reefMaterials);
   scene.add(seabed, ocean.group, createFrame(), snow);
   pipeline.outputNode = post.build(scenePass);
 
-  loadModel('test_rock').then((rock) => {
-    rock.position.set(-33, seabedHeight(-33, 6) + 0.2, 6);
-    rock.scale.setScalar(1.6);
-    scene.add(rock);
-  });
+  createReef(reefMaterials).then((reef) => scene.add(reef));
 
   const resolution = new ResolutionController(renderer);
   const hud = new PerfHud(renderer);
@@ -136,7 +134,7 @@ async function main(): Promise<void> {
   });
 
   Object.assign(window, {
-    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal },
+    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials },
   });
 }
 

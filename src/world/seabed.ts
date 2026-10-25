@@ -1,8 +1,9 @@
 import * as THREE from 'three/webgpu';
-import { color, mix, positionWorld, smoothstep, sin, float, normalWorld, abs } from 'three/tsl';
+import { attribute, color, mix, positionWorld, smoothstep, sin, float, normalWorldGeometry, abs, texture } from 'three/tsl';
 import { HALF_X, HALF_Z, WORLD } from '../config';
-import { seabedHeight } from './seabedProfile';
+import { reefDensity, seabedHeight, seagrassDensity } from './seabedProfile';
 import type { UnderwaterLighting } from '../underwater/underwaterLighting';
+import type { ReefMaterials } from '../reef/reefMaterials';
 
 const SEG_PER_METRE = 3;
 
@@ -10,9 +11,17 @@ function buildTop(): THREE.BufferGeometry {
   const geo = new THREE.PlaneGeometry(WORLD.sizeX, WORLD.sizeZ, WORLD.sizeX * SEG_PER_METRE, WORLD.sizeZ * SEG_PER_METRE);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
+  const reef = new Float32Array(pos.count);
+  const grass = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
-    pos.setY(i, seabedHeight(pos.getX(i), pos.getZ(i)));
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    pos.setY(i, seabedHeight(x, z));
+    reef[i] = reefDensity(x, z);
+    grass[i] = seagrassDensity(x, z);
   }
+  geo.setAttribute('aReef', new THREE.BufferAttribute(reef, 1));
+  geo.setAttribute('aGrass', new THREE.BufferAttribute(grass, 1));
   geo.computeVertexNormals();
   return geo;
 }
@@ -53,7 +62,7 @@ function buildSkirt(): THREE.BufferGeometry {
   return geo;
 }
 
-export function createSeabed(underwater: UnderwaterLighting): THREE.Group {
+export function createSeabed(underwater: UnderwaterLighting, materials: ReefMaterials): THREE.Group {
   const group = new THREE.Group();
   group.name = 'seabed';
 
@@ -67,9 +76,18 @@ export function createSeabed(underwater: UnderwaterLighting): THREE.Group {
   // The swash zone stays damp: darker, glossier sand just above the waterline.
   const wet = smoothstep(0.42, 0.12, y).mul(smoothstep(-0.4, 0.05, y));
   const surface = mix(mix(sandByHeight, drySand, smoothstep(0.0, 0.5, y)), color(0xc9a597), wet.mul(0.7));
-  const steep = float(1).sub(abs(normalWorld.y)).mul(4).clamp(0, 1);
-  topMat.colorNode = mix(surface, color(0xa79d8a), steep);
-  topMat.roughnessNode = mix(float(0.93), float(0.38), wet);
+  const steep = float(1).sub(abs(normalWorldGeometry.y)).mul(4).clamp(0, 1);
+  const sand = mix(surface, color(0xa79d8a), steep);
+
+  // Hard reef framework shows through the sand where the reef density is high, with a ragged edge.
+  const crust = materials.crustLayer();
+  const edgeNoise = texture(materials.tex.crust.arm, positionWorld.xz.mul(0.09)).g;
+  const reefMask = smoothstep(0.35, 0.65, attribute<'float'>('aReef', 'float').add(edgeNoise.sub(0.5).mul(0.5)));
+  // Under a meadow the bed is dark with detritus and the blade canopy, which reads from afar where blades are sub-pixel.
+  const meadow = smoothstep(0.05, 0.6, attribute<'float'>('aGrass', 'float')).mul(mix(float(0.75), float(1), edgeNoise));
+  topMat.colorNode = mix(mix(sand, color(0x3e4a22), meadow.mul(0.8)), crust.albedo, reefMask);
+  topMat.roughnessNode = mix(mix(float(0.93), float(0.38), wet), crust.rough, reefMask);
+  topMat.normalNode = materials.toView(mix(materials.sandNormal(), crust.normal, reefMask).normalize());
   underwater.apply(topMat);
 
   const skirtMat = new THREE.MeshStandardNodeMaterial({ roughness: 1 });

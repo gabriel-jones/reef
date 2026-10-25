@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { Fn, vec4, float, uniform, output, positionWorld, normalWorld, exp, max, abs, clamp, smoothstep, step, length, cameraPosition } from 'three/tsl';
+import { vec4, float, uniform, output, positionWorld, normalWorld, exp, max, abs, clamp, smoothstep, step, length, cameraPosition } from 'three/tsl';
 import { HALF_X, HALF_Z, WORLD } from '../config';
 import type { Caustics } from './caustics';
 
@@ -50,6 +50,6 @@ export class UnderwaterLighting {
   }
 
   apply(material: THREE.NodeMaterial): void {
-    material.outputNode = Fn(() => vec4(output.rgb.mul(this.factor(positionWorld, normalWorld)), output.a))();
+    material.outputNode = vec4(output.rgb.mul(this.factor(positionWorld, normalWorld)), output.a);
   }
 }

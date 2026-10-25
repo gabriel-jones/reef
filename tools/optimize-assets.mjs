@@ -25,13 +25,23 @@ const names = requested.length
   ? requested
   : readdirSync(rawDir).filter((f) => f.endsWith('.glb')).map((f) => f.slice(0, -4));
 
+// Procedural textures written by blender/textures/*.py.
+const texRaw = join(rawDir, 'textures');
+const texOut = join(outDir, 'textures');
+mkdirSync(texOut, { recursive: true });
+for (const f of readdirSync(texRaw).filter((f) => f.startsWith('gen_') && f.endsWith('.png'))) {
+  const dst = join(texOut, f.replace(/^gen_/, '').replace(/\.png$/, '.webp'));
+  await sharp(join(texRaw, f)).webp({ quality: 92, alphaQuality: 100 }).toFile(dst);
+  console.log(`✔ textures/${f} → ${dst.split('/').pop()}`);
+}
+
 for (const name of names) {
   const src = join(rawDir, `${name}.glb`);
   const dst = join(outDir, `${name}.glb`);
   const doc = await io.read(src);
   await doc.transform(
     dedup(),
-    prune(),
+    prune({ keepAttributes: true }),
     resample(),
     weld(),
     textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [2048, 2048] }),
