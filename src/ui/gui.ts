@@ -21,11 +21,10 @@ export function createGui(opts: {
   caustics: Caustics;
 }): GUI {
   const gui = new GUI({ title: 'Reef' });
-  const { renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics } = opts;
+  const { resolution, hud, sky, oceanSim, ocean, underwater, post, caustics } = opts;
 
   const sun = gui.addFolder('Sun');
-  sun.add(sky.state, 'elevation', -10, 90, 0.1).onChange(() => sky.update());
-  sun.add(sky.state, 'azimuth', 0, 360, 0.1).onChange(() => sky.update());
+  sun.add(sky.state, 'hours', 0, 24, 0.01).name('time of day').onChange(() => sky.update()).listen();
   sun.add(sky.state, 'rayleigh', 0.2, 4, 0.01).onChange(() => sky.update());
   sun.add(sky.state, 'mie', 0, 5, 0.01).name('haze').onChange(() => sky.update());
   sun.add(sky.state, 'sunLux', 0, 12, 0.01).name('sun intensity').onChange(() => sky.update());
@@ -78,7 +77,7 @@ export function createGui(opts: {
   under.add(ocean.swashSpeed, 'value', 0, 2, 0.01).name('swash speed');
 
   const render = gui.addFolder('Render');
-  render.add(renderer, 'toneMappingExposure', 0.05, 3, 0.01).name('exposure').listen();
+  render.add(sky.state, 'exposure', 0.05, 3, 0.01).onChange(() => sky.update());
   render.add(resolution, 'enabled').name('auto resolution');
   const scaleProxy = { scale: resolution.scale };
   render

@@ -123,6 +123,11 @@ export function sunTransmittance(sunDir: THREE.Vector3, rayleighScale: number, m
 export class SkyLut {
   readonly target: THREE.RenderTarget;
   readonly sunDir = uniform(new THREE.Vector3(0, 1, 0));
+  readonly moonDir = uniform(new THREE.Vector3(0, -1, 0));
+  /** Moonlit sky relative to sunlit sky. */
+  readonly moonScale = uniform(0);
+  /** Toward the key light (sun or moon), matching sunRadiance. */
+  readonly keyDir = uniform(new THREE.Vector3(0, 1, 0));
   readonly rayleigh = uniform(1);
   readonly mie = uniform(1);
   /** Open-ocean scattering colour for the below-horizon backdrop. */
@@ -150,13 +155,18 @@ export class SkyLut {
       const phi = st.x.sub(0.5).mul(PI.mul(2));
       const theta = st.y.sub(0.5).mul(PI);
       const dir = vec3(cos(theta).mul(cos(phi)), sin(theta), cos(theta).mul(sin(phi)));
-      const sky = skyRadiance(dir, this.sunDir, this.rayleigh, this.mie);
-      // Below the horizon: distant open ocean — Fresnel-weighted sky reflection over sunlit deep water.
-      const mirrored = skyRadiance(vec3(dir.x, dir.y.negate(), dir.z), this.sunDir, this.rayleigh, this.mie);
-      const zenith = skyRadiance(vec3(0, 1, 0), this.sunDir, this.rayleigh, this.mie);
+      // Sunlit + moonlit single scattering, over a faint airglow/starlight floor.
+      const radiance = (d: Vec3Node) =>
+        skyRadiance(d, this.sunDir, this.rayleigh, this.mie)
+          .add(skyRadiance(d, this.moonDir, this.rayleigh, this.mie).mul(this.moonScale))
+          .add(vec3(0.4, 0.6, 1.3).mul(1.2e-4));
+      const sky = radiance(dir);
+      // Below the horizon: distant open ocean — Fresnel-weighted sky reflection over lit deep water.
+      const mirrored = radiance(vec3(dir.x, dir.y.negate(), dir.z));
+      const zenith = radiance(vec3(0, 1, 0));
       const cosV = max(dir.y.negate(), 0.0);
       const fresnel = float(0.02).add(float(0.98).mul(float(1).sub(cosV).pow(5)));
-      const downwelling = this.sunRadiance.mul(max(this.sunDir.y, 0)).add(zenith.mul(PI));
+      const downwelling = this.sunRadiance.mul(max(this.keyDir.y, 0)).add(zenith.mul(PI));
       const deep = this.seaColor.mul(downwelling).div(PI);
       const sea = mix(deep, mirrored, fresnel);
       return vec4(mix(sky, sea, smoothstep(0.0, -0.01, dir.y)), 1);

@@ -509,6 +509,8 @@ async function vatGeometry(file: string): Promise<THREE.BufferGeometry> {
 export interface Fauna {
   group: THREE.Group;
   update(dt: number, camera: THREE.Vector3): void;
+  /** Every swimmer's position, speed and body length, e.g. for bioluminescent wakes. */
+  emit(fn: (x: number, y: number, z: number, speed: number, size: number, dt: number) => void, dt: number): void;
 }
 
 export async function createFauna(underwater: UnderwaterLighting, seed = 777): Promise<Fauna> {
@@ -588,6 +590,11 @@ export async function createFauna(underwater: UnderwaterLighting, seed = 777): P
 
   return {
     group,
+    emit(fn, dt) {
+      for (const s of [...reefSchools, ...bait]) for (const a of s.agents) fn(a.pos.x, a.pos.y, a.pos.z, a.vel.length(), s.length * a.scale, dt);
+      for (const b of barracuda) fn(b.pos.x, b.pos.y, b.pos.z, b.vel.length(), 1.3, dt);
+      fn(turtle.pos.x, turtle.pos.y, turtle.pos.z, turtle.vel.length() + 0.15, 1.0, dt);
+    },
     update(dt, camera) {
       dt = Math.min(dt, 1 / 20);
       for (const s of reefSchools) s.update(dt, camera, threats);

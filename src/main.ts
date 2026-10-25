@@ -8,6 +8,7 @@ import { createSeabed } from './world/seabed';
 import { SeabedMap } from './world/seabedMap';
 import { createFrame } from './world/frame';
 import { createGui } from './ui/gui';
+import { createTimeArc } from './ui/timeArc';
 import { seabedHeight } from './world/seabedProfile';
 import { DEFAULT_OCEAN } from './ocean/params';
 import { OceanSim } from './ocean/oceanSim';
@@ -17,6 +18,7 @@ import { Caustics } from './underwater/caustics';
 import { UnderwaterLighting } from './underwater/underwaterLighting';
 import { UnderwaterPost } from './underwater/underwaterPost';
 import { createMarineSnow } from './underwater/marineSnow';
+import { Bioluminescence } from './underwater/bioluminescence';
 import { ReefMaterials } from './reef/reefMaterials';
 import { createReef } from './reef/reef';
 import { createFauna, type Fauna } from './fauna/fauna';
@@ -59,7 +61,8 @@ async function main(): Promise<void> {
 
   const reefMaterials = new ReefMaterials(underwater);
   const seabed = createSeabed(underwater, reefMaterials);
-  scene.add(seabed, ocean.group, createFrame(), snow);
+  const bio = new Bioluminescence(sky);
+  scene.add(seabed, ocean.group, createFrame(), snow, bio.sprite);
   pipeline.outputNode = post.build(scenePass);
 
   createReef(reefMaterials).then((reef) => scene.add(reef));
@@ -72,6 +75,7 @@ async function main(): Promise<void> {
   const resolution = new ResolutionController(renderer);
   const hud = new PerfHud(renderer);
   const gui = createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
+  const timeArc = createTimeArc(sky);
   // Dev tools stay out of the way: ?dev in the URL, or the backquote key, toggles them.
   let dev = new URLSearchParams(location.search).has('dev');
   const showDev = () => {
@@ -121,9 +125,20 @@ async function main(): Promise<void> {
       if (camera.position.y < floor) camera.position.y = floor;
     }
 
+    timeArc.tick();
     fauna?.update(dt, camera.position);
+    if (bio.begin(dt, camera.position, state.underwater)) {
+      fauna?.emit(bio.emit, dt);
+      bio.end();
+    }
+    // Eye adaptation: ease exposure toward the light level (faster when brightening, like a real eye).
+    const exp = renderer.toneMappingExposure;
+    // Under the surface at night the eye can't fully adapt, so the dark (and the glow) stays.
+    const target = sky.targetExposure * (state.underwater ? 1 - 0.6 * sky.night.value : 1);
+    const rate = target < exp ? 3 : 1.2;
+    renderer.toneMappingExposure = Math.exp(THREE.MathUtils.lerp(Math.log(exp), Math.log(target), 1 - Math.exp(-dt * rate)));
     sky.tick(renderer);
-    underwater.updateSun(sky.direction);
+    underwater.updateSun(sky.keyDirection);
     oceanSim.update(renderer, dt);
     caustics.update(renderer);
     probe.update(renderer, camera.position.x, camera.position.z);
@@ -154,7 +169,7 @@ async function main(): Promise<void> {
   });
 
   Object.assign(window, {
-    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials, get fauna() { return fauna; } },
+    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials, bio, get fauna() { return fauna; } },
   });
 }
 

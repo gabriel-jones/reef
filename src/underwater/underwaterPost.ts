@@ -94,7 +94,7 @@ export class UnderwaterPost {
         // In-scatter: downwelling light dimmed to the eye's depth, brighter toward the sun and the surface.
         const lu = this.lighting.sunUnderwater;
         const zenith = texture(this.sky.lut.target.texture, equirectUV(vec3(0, 1, 0))).rgb;
-        const downwelling = this.sky.sunRadiance.mul(max(this.sky.lut.sunDir.y, 0)).add(zenith.mul(PI));
+        const downwelling = this.sky.sunRadiance.mul(max(this.sky.lightDir.y, 0)).add(zenith.mul(PI));
         const eyeDepth = max(surfaceY.sub(cameraPosition.y), 0);
         const ambient = downwelling.mul(exp(look.absorption.mul(eyeDepth).mul(0.7).negate()));
         const cosSun = dot(viewDir, lu);

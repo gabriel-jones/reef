@@ -40,6 +40,7 @@ import {
 } from 'three/tsl';
 import { HALF_X, HALF_Z, WORLD } from '../config';
 import type { SeabedMap } from '../world/seabedMap';
+import { foamGlow } from '../underwater/bioluminescence';
 import type { SkyAndSun } from '../world/sky';
 import { CASCADES } from './params';
 import type { OceanSim } from './oceanSim';
@@ -204,7 +205,7 @@ export class OceanSurface {
 
   /** Downwelling irradiance just below the surface (sun + sky); sky zenith is passed in as a vertex varying. */
   private downwelling(skyZenith: Vec3Node): Vec3Node {
-    return this.sky.sunRadiance.mul(max(this.sky.lut.sunDir.y, 0)).add(skyZenith.mul(PI));
+    return this.sky.sunRadiance.mul(max(this.sky.lightDir.y, 0)).add(skyZenith.mul(PI));
   }
 
   /**
@@ -257,7 +258,7 @@ export class OceanSurface {
       const N = select(frontFacing, nLocal, nLocal.negate()).toVar();
 
       const V = normalize(cameraPosition.sub(positionWorld)).toVar();
-      const L = this.sky.lut.sunDir;
+      const L = this.sky.lightDir;
       const NdotV = max(dot(N, V), 1e-3).toVar();
       const fresnel = float(0.02).add(float(0.98).mul(pow(float(1).sub(NdotV), 5))).toVar();
 
@@ -312,7 +313,9 @@ export class OceanSurface {
 
       const water = mix(below, reflection, fresnel).add(specular).add(sss);
       const foamOpacity = foamMask.mul(mix(float(0.45), float(0.95), fine.mul(foamMask)));
-      const shaded = mix(water, foamLight, foamOpacity);
+      // At night, breaking water lights up with bioluminescent plankton.
+      const glow = foamGlow(this.sky, foamOpacity, fine.mul(1.2).add(sin(time.mul(3.1).add(tex.mul(23))).mul(0.35)).max(0));
+      const shaded = mix(water, foamLight, foamOpacity).add(glow);
       const dbg = this.debugView;
       const lit = select(
         dbg.equal(1),
@@ -329,7 +332,7 @@ export class OceanSurface {
       const skyThrough = this.skyAt(T).add(this.sky.sunRadiance.mul(pow(max(dot(T, L), 0), 900).mul(60)));
       const mirrored = this.look.deepColor.mul(down).div(PI).mul(1.9);
       const window = mix(skyThrough.mul(0.9), mirrored, fresnelUp.min(1));
-      const underFoam = mix(select(throughWindow, window, mirrored), foamLight.mul(0.5), foamOpacity.mul(0.7));
+      const underFoam = mix(select(throughWindow, window, mirrored), foamLight.mul(0.5), foamOpacity.mul(0.7)).add(glow);
       return vec4(select(frontFacing, lit, underFoam), 1);
     })();
 
