@@ -15,6 +15,12 @@ const evalJs = opt('eval', '');
 const [w, h] = opt('size', '1728x1117').split('x').map(Number);
 const dpr = Number(opt('dpr', 2));
 
+const guard = setTimeout(() => {
+  console.log('[shot] timed out after 60s');
+  process.exit(2);
+}, 60000);
+guard.unref();
+
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new',

@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { Fn, Loop, float, vec3, vec4, uv, uniform, exp, sqrt, max, dot, cos, sin, mix, smoothstep, PI } from 'three/tsl';
 
+
 /** Nishita-style single scattering, in metres. Shared by the GPU sky LUT and the CPU sun-colour solve. */
 export const ATMO = {
   earthRadius: 6360e3,
@@ -124,7 +125,10 @@ export class SkyLut {
   readonly sunDir = uniform(new THREE.Vector3(0, 1, 0));
   readonly rayleigh = uniform(1);
   readonly mie = uniform(1);
-  readonly horizonTint = uniform(new THREE.Vector3(0.02, 0.21, 0.32));
+  /** Open-ocean scattering colour for the below-horizon backdrop. */
+  readonly seaColor = uniform(new THREE.Vector3(0.0, 0.07, 0.12));
+  /** Sun irradiance in scene light units, shared with the sun light. */
+  readonly sunRadiance = uniform(new THREE.Vector3(1, 1, 1));
 
   private quad: THREE.QuadMesh;
   private dirty = true;
@@ -147,10 +151,15 @@ export class SkyLut {
       const theta = st.y.sub(0.5).mul(PI);
       const dir = vec3(cos(theta).mul(cos(phi)), sin(theta), cos(theta).mul(sin(phi)));
       const sky = skyRadiance(dir, this.sunDir, this.rayleigh, this.mie);
-      // Below the horizon: a distant open ocean that takes the sky's horizon colour, darkening downward.
-      const horizon = skyRadiance(vec3(dir.x, 0.0, dir.z), this.sunDir, this.rayleigh, this.mie);
-      const sea = mix(horizon.mul(0.55), this.horizonTint.mul(horizon.length().mul(0.12)), smoothstep(0.0, -0.35, dir.y));
-      return vec4(mix(sky, sea, smoothstep(0.0, -0.02, dir.y)), 1);
+      // Below the horizon: distant open ocean — Fresnel-weighted sky reflection over sunlit deep water.
+      const mirrored = skyRadiance(vec3(dir.x, dir.y.negate(), dir.z), this.sunDir, this.rayleigh, this.mie);
+      const zenith = skyRadiance(vec3(0, 1, 0), this.sunDir, this.rayleigh, this.mie);
+      const cosV = max(dir.y.negate(), 0.0);
+      const fresnel = float(0.02).add(float(0.98).mul(float(1).sub(cosV).pow(5)));
+      const downwelling = this.sunRadiance.mul(max(this.sunDir.y, 0)).add(zenith.mul(PI));
+      const deep = this.seaColor.mul(downwelling).div(PI);
+      const sea = mix(deep, mirrored, fresnel);
+      return vec4(mix(sky, sea, smoothstep(0.0, -0.01, dir.y)), 1);
     })();
     mat.depthTest = false;
     mat.depthWrite = false;

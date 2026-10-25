@@ -3,6 +3,7 @@ import * as THREE from 'three/webgpu';
 export class PerfHud {
   readonly el = document.createElement('div');
   gpuMs = 0;
+  computeMs = 0;
 
   private frames = 0;
   private cpuAccum = 0;
@@ -37,7 +38,7 @@ export class PerfHud {
     this.el.innerHTML =
       `<span${fpsClass}>${this.fps.toFixed(0).padStart(3)} fps</span>\n` +
       `cpu  ${this.cpuMs.toFixed(2)} ms\n` +
-      `gpu  ${this.gpuMs ? this.gpuMs.toFixed(2) + ' ms' : 'n/a'}\n` +
+      `gpu  ${this.gpuMs ? `${this.gpuMs.toFixed(2)} ms (sim ${this.computeMs.toFixed(2)})` : 'n/a'}\n` +
       `draw ${info.render.drawCalls}  tris ${(info.render.triangles / 1000).toFixed(0)}k\n` +
       `res  ${size.x}×${size.y} @${scale.toFixed(2)}`;
   }

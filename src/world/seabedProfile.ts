@@ -54,13 +54,12 @@ export function seabedHeight(x: number, z: number): number {
   // Patch-reef mounds in the middle of the slab.
   const mounds = Math.max(fbm(x * 0.09 + 7, z * 0.09 - 3, 3), 0) * 2.4 * smoothstep(-12, -4, x) * (1 - smoothstep(16, 22, x));
 
-  // Boiler: a ring of algal reef that nearly breaches the surface.
+  const ripples = fbm(x * 0.35, z * 0.35, 3) * 0.18;
+  const base = beach + shelf + deep + mounds + ripples;
+
+  // Boiler: a ring of algal reef whose crest nearly breaches the surface.
   const r = Math.hypot(x - BOILER.x, (z - BOILER.z) * 1.15);
   const ring = Math.exp(-((r - BOILER.radius) ** 2) / (2 * BOILER.width ** 2));
-  const boilerTop = -0.45 - (-3.6 - 5.5 * smoothstep(10, HALF_X, x));
-  const boiler = ring * boilerTop * (0.85 + 0.15 * fbm(x * 0.4, z * 0.4, 2));
-
-  const ripples = fbm(x * 0.35, z * 0.35, 3) * 0.18;
-
-  return beach + shelf + deep + mounds + boiler + ripples;
+  const crest = -0.35 + fbm(x * 0.5, z * 0.5, 3) * 0.35;
+  return base + (crest - base) * ring;
 }

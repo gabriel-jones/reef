@@ -17,7 +17,9 @@ export class SkyAndSun {
   readonly sun = new THREE.DirectionalLight(0xffffff, 1);
   readonly direction = new THREE.Vector3();
   readonly sunColor = uniform(new THREE.Vector3(1, 1, 1));
-  readonly state: SunState = { elevation: 52, azimuth: 205, rayleigh: 1.25, mie: 0.6, sunLux: 4.2, envIntensity: 1 };
+  /** Direct sun irradiance at sea level (colour × intensity), for custom-lit materials. */
+  readonly sunRadiance = this.lut.sunRadiance;
+  readonly state: SunState = { elevation: 52, azimuth: 35, rayleigh: 1.25, mie: 0.6, sunLux: 4.2, envIntensity: 1 };
 
   private transmittance = new THREE.Color();
 
@@ -60,6 +62,7 @@ export class SkyAndSun {
     const horizonFade = THREE.MathUtils.smoothstep(st.elevation, -2, 3);
     this.sun.color.copy(this.transmittance);
     this.sun.intensity = st.sunLux * horizonFade;
+    this.sunRadiance.value.set(this.transmittance.r, this.transmittance.g, this.transmittance.b).multiplyScalar(this.sun.intensity);
     this.sun.position.copy(this.direction).multiplyScalar(100);
     this.sun.target.position.set(0, 0, 0);
     this.scene.environmentIntensity = st.envIntensity;
