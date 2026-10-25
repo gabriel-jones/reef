@@ -5,3 +5,6 @@ assets/raw/
 .DS_Store
 shots/
 __pycache__/
+
+# Cloudflare
+.wrangler/
