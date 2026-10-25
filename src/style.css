@@ -1,0 +1,46 @@
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #05131c;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+#app,
+#app canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#unsupported {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: #cfe8ee;
+}
+
+#unsupported[hidden] {
+  display: none;
+}
+
+.perf-hud {
+  position: fixed;
+  left: 10px;
+  top: 10px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: rgba(2, 14, 22, 0.62);
+  color: #bfe6ef;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.perf-hud .bad {
+  color: #ff9b85;
+}

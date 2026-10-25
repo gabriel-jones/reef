@@ -1,0 +1,7 @@
+node_modules/
+dist/
+assets/raw/
+*.blend1
+.DS_Store
+shots/
+__pycache__/
