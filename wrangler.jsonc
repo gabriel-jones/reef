@@ -1,6 +1,7 @@
 {
   "name": "reef",
   "compatibility_date": "2026-10-01",
+  "routes": [{ "pattern": "reef.gdev.bm", "custom_domain": true }],
   "assets": {
     "directory": "./dist"
   }
