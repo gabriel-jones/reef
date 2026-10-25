@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
+import { dot, fract, renderOutput, screenCoordinate, vec2, vec4 } from 'three/tsl';
 import { createRenderer, ResolutionController } from './core/renderer';
 import { PerfHud } from './core/perfHud';
 import { HALF_X, HALF_Z } from './config';
@@ -9,6 +11,9 @@ import { SeabedMap } from './world/seabedMap';
 import { createFrame } from './world/frame';
 import { createGui } from './ui/gui';
 import { createTimeArc } from './ui/timeArc';
+import { createCornerButtons } from './ui/corner';
+import { PhotoMode } from './ui/photoMode';
+import { Ambience } from './audio/ambience';
 import { seabedHeight } from './world/seabedProfile';
 import { DEFAULT_OCEAN } from './ocean/params';
 import { OceanSim } from './ocean/oceanSim';
@@ -24,6 +29,13 @@ import { createReef } from './reef/reef';
 import { createFauna, type Fauna } from './fauna/fauna';
 
 const CAMERA_CLEARANCE = 0.45;
+const INTRO_SECONDS = 6.5;
+
+/** Interleaved-gradient noise, ±1 LSB triangular: hides 8-bit banding in the sky and fog gradients. */
+function dithered(color: THREE.Node<'vec4'>): THREE.Node<'vec4'> {
+  const ign = (o: number) => fract(fract(dot(screenCoordinate.xy.add(o), vec2(0.06711056, 0.00583715))).mul(52.9829189));
+  return vec4(color.rgb.add(ign(0).add(ign(5.588238)).sub(1).div(255)), 1);
+}
 
 async function main(): Promise<void> {
   if (!navigator.gpu) {
@@ -63,11 +75,19 @@ async function main(): Promise<void> {
   const seabed = createSeabed(underwater, reefMaterials);
   const bio = new Bioluminescence(sky);
   scene.add(seabed, ocean.group, createFrame(), snow, bio.sprite);
-  pipeline.outputNode = post.build(scenePass);
+  const photo = new PhotoMode(() => (captureNext = true));
+  const hdr = post.build(scenePass);
+  const output = dithered(renderOutput(hdr));
+  const photoOutput = dithered(renderOutput(dof(hdr, scenePass.getViewZNode(), photo.focus, photo.focalLength, photo.bokeh)));
+  pipeline.outputColorTransform = false;
+  pipeline.outputNode = output;
+  let captureNext = false;
 
   let fauna: Fauna | null = null;
+  let reefGroup: THREE.Group | null = null;
   createReef(reefMaterials)
     .then(({ group, surfaces }) => {
+      reefGroup = group;
       scene.add(group);
       return createFauna(underwater, surfaces);
     })
@@ -80,6 +100,8 @@ async function main(): Promise<void> {
   const hud = new PerfHud(renderer);
   const gui = createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
   const timeArc = createTimeArc(sky);
+  const ambience = new Ambience();
+  createCornerButtons({ sound: (on) => void ambience.setEnabled(on), photo: () => photo.toggle() });
   // Dev tools stay out of the way: ?dev in the URL, or the backquote key, toggles them.
   let dev = new URLSearchParams(location.search).has('dev');
   const showDev = () => {
@@ -105,6 +127,56 @@ async function main(): Promise<void> {
     if (hit) targetGoal.copy(hit.point).add(new THREE.Vector3(0, 1.2, 0));
   });
 
+  // Photo mode: the world freezes, depth of field comes in, clicks focus.
+  const forward = new THREE.Vector3();
+  const focusOn = (point: THREE.Vector3) => photo.focusAt(Math.max(forward.copy(point).sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())), 0.3));
+  photo.onChange((on) => {
+    pipeline.outputNode = on ? photoOutput : output;
+    pipeline.needsUpdate = true;
+    if (on) focusOn(controls.target);
+  });
+  let downAt = { x: 0, y: 0 };
+  renderer.domElement.addEventListener('pointerdown', (e) => (downAt = { x: e.clientX, y: e.clientY }));
+  renderer.domElement.addEventListener('click', (e) => {
+    if (!photo.active || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+    const ndc = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const targets: THREE.Object3D[] = [seabedTop, ...(reefGroup?.children.filter((o) => o.name !== 'seagrass') ?? []), ...(fauna?.group.children ?? [])];
+    const hit = raycaster.intersectObjects(targets, false)[0];
+    if (hit) focusOn(hit.point);
+  });
+  const saveFrame = () => {
+    const scale = resolution.scale;
+    const auto = resolution.enabled;
+    resolution.enabled = false;
+    renderer.setPixelRatio(Math.max(window.devicePixelRatio, 2));
+    pipeline.render();
+    // Read back in the same task as the render, before the canvas is presented.
+    renderer.domElement.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `reef-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.png`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }, 'image/png');
+    renderer.setPixelRatio(scale);
+    resolution.enabled = auto;
+  };
+
+  // Veil until the reef and fauna are in and their shaders compiled, then a slow fly-in.
+  const automated = navigator.webdriver || dev;
+  const veil = document.getElementById('veil')!;
+  const home = { position: camera.position.clone(), target: controls.target.clone() };
+  const homeSph = new THREE.Spherical().setFromVector3(home.position.clone().sub(home.target));
+  const startSph = new THREE.Spherical(homeSph.radius * 1.7, homeSph.phi - 0.22, homeSph.theta + 0.75);
+  let intro = automated ? -1 : 0;
+  let readyFrames = 0;
+  let lifted = automated;
+  if (automated) veil.remove();
+  else camera.position.setFromSpherical(startSph).add(home.target);
+  controls.addEventListener('start', () => (intro = -1));
+
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -114,12 +186,34 @@ async function main(): Promise<void> {
   const timer = new THREE.Timer();
   timer.connect(document);
   const state = { underwater: false };
+  const lastCam = camera.position.clone();
+  const listener = { position: camera.position, right: new THREE.Vector3(), underwater: false, depth: 0, night: 0, speed: 0 };
+  let adapted = renderer.toneMappingExposure;
 
   let resolving = false;
   renderer.setAnimationLoop((now: number) => {
     const t0 = performance.now();
     timer.update(now);
     const dt = timer.getDelta();
+    const frozen = photo.active;
+
+    if (!automated && !lifted && (fauna || now > 30000) && ++readyFrames > 20) {
+      lifted = true;
+      veil.classList.add('lifted');
+      setTimeout(() => veil.remove(), 2500);
+    }
+    if (intro >= 0 && lifted) intro += dt / INTRO_SECONDS;
+    if (intro >= 0) {
+      const k = Math.min(intro, 1);
+      const e = 1 - Math.pow(1 - k, 3);
+      const sph = new THREE.Spherical(
+        THREE.MathUtils.lerp(startSph.radius, homeSph.radius, e),
+        THREE.MathUtils.lerp(startSph.phi, homeSph.phi, e),
+        THREE.MathUtils.lerp(startSph.theta, homeSph.theta, e),
+      );
+      camera.position.setFromSpherical(sph).add(home.target);
+      if (k >= 1) intro = -1;
+    }
 
     controls.target.lerp(targetGoal, 1 - Math.exp(-dt * 4));
     controls.update();
@@ -130,26 +224,42 @@ async function main(): Promise<void> {
     }
 
     timeArc.tick();
-    fauna?.update(dt, camera.position);
-    if (bio.begin(dt, camera.position, state.underwater)) {
-      fauna?.emit(bio.emit, dt);
-      bio.end();
+    if (!frozen) {
+      fauna?.update(dt, camera.position);
+      if (bio.begin(dt, camera.position, state.underwater)) {
+        fauna?.emit(bio.emit, dt);
+        bio.end();
+      }
     }
     // Eye adaptation: ease exposure toward the light level (faster when brightening, like a real eye).
-    const exp = renderer.toneMappingExposure;
+    const exp = adapted;
     // Under the surface at night the eye can't fully adapt, so the dark (and the glow) stays.
     const target = sky.targetExposure * (state.underwater ? 1 - 0.6 * sky.night.value : 1);
     const rate = target < exp ? 3 : 1.2;
-    renderer.toneMappingExposure = Math.exp(THREE.MathUtils.lerp(Math.log(exp), Math.log(target), 1 - Math.exp(-dt * rate)));
+    adapted = Math.exp(THREE.MathUtils.lerp(Math.log(exp), Math.log(target), 1 - Math.exp(-dt * rate)));
+    renderer.toneMappingExposure = adapted * (frozen ? 2 ** photo.settings.ev : 1);
     sky.tick(renderer);
     underwater.updateSun(sky.keyDirection);
-    oceanSim.update(renderer, dt);
-    caustics.update(renderer);
+    if (!frozen) {
+      oceanSim.update(renderer, dt);
+      caustics.update(renderer);
+    }
     probe.update(renderer, camera.position.x, camera.position.z);
     state.underwater = inSlab && camera.position.y < probe.height;
     snow.visible = inSlab && camera.position.y < probe.height + 1;
 
-    pipeline.render();
+    listener.right.setFromMatrixColumn(camera.matrixWorld, 0);
+    listener.underwater = state.underwater;
+    listener.depth = Math.max(probe.height - camera.position.y, 0);
+    listener.night = sky.night.value;
+    listener.speed = dt > 0 ? lastCam.distanceTo(camera.position) / dt : 0;
+    lastCam.copy(camera.position);
+    ambience.update(dt, listener);
+
+    if (captureNext) {
+      captureNext = false;
+      saveFrame();
+    } else pipeline.render();
     const cpuMs = performance.now() - t0;
 
     if (!resolving && renderer.hasFeature('timestamp-query')) {
@@ -173,7 +283,7 @@ async function main(): Promise<void> {
   });
 
   Object.assign(window, {
-    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials, bio, get fauna() { return fauna; } },
+    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials, bio, photo, ambience, get fauna() { return fauna; } },
   });
 }
 

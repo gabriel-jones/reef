@@ -109,3 +109,146 @@ body {
   margin-top: -6px;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
+
+.corner-buttons {
+  position: fixed;
+  right: 156px;
+  bottom: 18px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+}
+
+.corner-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #d8eef3;
+  opacity: 0.42;
+  cursor: pointer;
+  transition: opacity 0.35s, background 0.35s;
+}
+
+.corner-button:hover,
+.corner-button.on {
+  opacity: 0.95;
+}
+
+.corner-button:hover {
+  background: rgba(2, 14, 22, 0.35);
+}
+
+.corner-button svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+.photo-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(2, 14, 22, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #d8eef3;
+  font: 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  z-index: 20;
+  user-select: none;
+}
+
+.photo-bar[hidden] {
+  display: none;
+}
+
+.photo-bar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.photo-bar input[type='range'] {
+  width: 90px;
+  accent-color: #bfe6ef;
+}
+
+.photo-bar button {
+  border: 1px solid rgba(216, 238, 243, 0.4);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+
+.photo-bar button:hover {
+  background: rgba(216, 238, 243, 0.15);
+}
+
+.photo-bar button[name='exit'] {
+  border: 0;
+  padding: 2px 6px;
+  font-size: 15px;
+}
+
+.photo-bar .hint {
+  opacity: 0.55;
+}
+
+body.photo .time-arc,
+body.photo .corner-buttons,
+body.photo .perf-hud,
+body.photo .lil-gui {
+  display: none !important;
+}
+
+#veil {
+  position: fixed;
+  inset: 0;
+  background: #05131c;
+  pointer-events: none;
+  z-index: 30;
+  transition: opacity 2.2s ease;
+}
+
+#veil.lifted {
+  opacity: 0;
+}
+
+#veil span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #bfe6ef;
+  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.5em;
+  text-transform: uppercase;
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
