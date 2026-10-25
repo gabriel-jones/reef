@@ -43,7 +43,52 @@ def apply_all_modifiers(obj):
         bpy.ops.object.modifier_apply(modifier=m.name)
 
 
-def export_glb(path, objects=None):
+def bake_vat(obj, frames, out_base, fps=24):
+    """Vertex animation texture: for each frame, evaluated vertex positions and normals (three.js
+    Y-up), written as float16 RGBA rows — rows [0, F) positions, [F, 2F) normals — to
+    <out_base>.bin, with <out_base>.json metadata. Adds a '_VAT' point attribute (vertex index)
+    so the exported glTF vertices can find their column after splitting/reordering."""
+    import json
+
+    import numpy as np
+
+    scene = bpy.context.scene
+    me = obj.data
+    n = len(me.vertices)
+    idx = me.attributes.get("_VAT") or me.attributes.new("_VAT", "FLOAT", "POINT")
+    for i in range(n):
+        idx.data[i].value = float(i)
+    data = np.zeros((2 * frames, n, 4), dtype=np.float32)
+    lo = np.full(3, 1e9)
+    hi = np.full(3, -1e9)
+    for f in range(frames):
+        scene.frame_set(scene.frame_start + f)
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = obj.evaluated_get(dg)
+        m = ev.to_mesh()
+        if len(m.vertices) != n:
+            raise RuntimeError("VAT bake: topology changes during animation")
+        co = np.empty(n * 3, dtype=np.float32)
+        no = np.empty(n * 3, dtype=np.float32)
+        m.vertices.foreach_get("co", co)
+        m.vertex_normals.foreach_get("vector", no)
+        co = co.reshape(n, 3)
+        no = no.reshape(n, 3)
+        # Blender (x, y, z) → glTF/three (x, z, -y)
+        data[f, :, 0], data[f, :, 1], data[f, :, 2] = co[:, 0], co[:, 2], -co[:, 1]
+        data[frames + f, :, 0], data[frames + f, :, 1], data[frames + f, :, 2] = no[:, 0], no[:, 2], -no[:, 1]
+        data[f, :, 3] = 1
+        lo = np.minimum(lo, data[f, :, :3].min(0))
+        hi = np.maximum(hi, data[f, :, :3].max(0))
+        ev.to_mesh_clear()
+    os.makedirs(os.path.dirname(os.path.abspath(out_base)), exist_ok=True)
+    data.astype(np.float16).tofile(out_base + ".bin")
+    with open(out_base + ".json", "w") as fh:
+        json.dump({"vertices": n, "frames": frames, "fps": fps, "min": lo.tolist(), "max": hi.tolist()}, fh)
+    print(f"[reef] VAT {out_base}: {n} verts × {frames} frames")
+
+
+def export_glb(path, objects=None, attributes=False):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     bpy.ops.object.select_all(action="DESELECT")
     targets = objects or [o for o in bpy.context.scene.objects if o.type == "MESH"]
@@ -62,6 +107,12 @@ def export_glb(path, objects=None):
         export_image_format="AUTO",
     )
     props = bpy.ops.export_scene.gltf.get_rna_type().properties.keys()
+    if attributes and "export_attributes" in props:
+        kwargs["export_attributes"] = True
+    if "export_skins" in props:
+        kwargs["export_skins"] = False
+    if "export_animations" in props:
+        kwargs["export_animations"] = False
     if "export_vertex_color" in props:
         kwargs["export_vertex_color"] = "ACTIVE"
     elif "export_colors" in props:

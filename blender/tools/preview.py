@@ -11,11 +11,36 @@ from mathutils import Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 src, out = argv[0], argv[1]
+# Optional: --tex <dir> <prefix>  → textured shading using <dir>/<prefix><mesh name>.png; --side rotates fish side-on.
+tex_dir = argv[argv.index("--tex") + 1] if "--tex" in argv else None
+tex_prefix = argv[argv.index("--tex") + 2] if "--tex" in argv else ""
+side = "--side" in argv
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=src)
 meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
 meshes.sort(key=lambda o: o.name)
+
+if side:
+    for o in meshes:
+        o.rotation_mode = "XYZ"
+        o.rotation_euler = (0, 0, math.pi / 2)
+if tex_dir:
+    import os
+
+    for o in meshes:
+        path = os.path.join(tex_dir, f"{tex_prefix}{o.name}.png")
+        if not os.path.exists(path):
+            continue
+        mat = bpy.data.materials.new(o.name + "_prev")
+        mat.use_nodes = True
+        nt = mat.node_tree
+        bsdf = next(n for n in nt.nodes if n.type == "BSDF_PRINCIPLED")
+        img = nt.nodes.new("ShaderNodeTexImage")
+        img.image = bpy.data.images.load(path)
+        nt.links.new(img.outputs[0], bsdf.inputs["Base Color"])
+        o.data.materials.clear()
+        o.data.materials.append(mat)
 
 # Lay out in a row with gaps proportional to size.
 x = 0.0
@@ -35,7 +60,7 @@ scene = bpy.context.scene
 scene.render.engine = "BLENDER_WORKBENCH"
 shading = scene.display.shading
 shading.light = "STUDIO"
-shading.color_type = "VERTEX"
+shading.color_type = "TEXTURE" if tex_dir else "VERTEX"
 shading.show_cavity = True
 shading.show_shadows = True
 scene.render.resolution_x = 1600

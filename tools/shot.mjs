@@ -31,7 +31,8 @@ const page = await browser.newPage();
 page.on('console', (m) => console.log(`[console.${m.type()}] ${m.text()}`));
 page.on('pageerror', (e) => console.log(`[pageerror] ${e.message}`));
 
-await page.goto(url, { waitUntil: 'networkidle0' });
+await page.goto(url, { waitUntil: 'load', timeout: 50000 });
+await new Promise((r) => setTimeout(r, 2500));
 if (evalJs) {
   await new Promise((r) => setTimeout(r, 1500));
   await page.evaluate(evalJs);

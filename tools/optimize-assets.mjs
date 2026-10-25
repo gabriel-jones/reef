@@ -45,7 +45,7 @@ for (const name of names) {
     resample(),
     weld(),
     textureCompress({ encoder: sharp, targetFormat: 'webp', resize: [2048, 2048] }),
-    quantize(),
+    quantize({ pattern: /^(?!_)/ }),
     meshopt({ encoder: MeshoptEncoder, level: 'medium' }),
   );
   await io.write(dst, doc);

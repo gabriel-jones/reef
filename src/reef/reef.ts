@@ -13,7 +13,7 @@ interface Family {
   castShadow?: boolean;
 }
 
-async function variantGeometries(file: string, prefix: string): Promise<THREE.BufferGeometry[]> {
+export async function variantGeometries(file: string, prefix: string): Promise<THREE.BufferGeometry[]> {
   const gltf = await loadGltf(file);
   gltf.scene.updateMatrixWorld(true);
   const found: Array<{ name: string; geo: THREE.BufferGeometry }> = [];

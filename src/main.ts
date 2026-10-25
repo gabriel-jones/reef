@@ -19,6 +19,7 @@ import { UnderwaterPost } from './underwater/underwaterPost';
 import { createMarineSnow } from './underwater/marineSnow';
 import { ReefMaterials } from './reef/reefMaterials';
 import { createReef } from './reef/reef';
+import { createFauna, type Fauna } from './fauna/fauna';
 
 const CAMERA_CLEARANCE = 0.45;
 
@@ -62,6 +63,11 @@ async function main(): Promise<void> {
   pipeline.outputNode = post.build(scenePass);
 
   createReef(reefMaterials).then((reef) => scene.add(reef));
+  let fauna: Fauna | null = null;
+  createFauna(underwater).then((f) => {
+    fauna = f;
+    scene.add(f.group);
+  });
 
   const resolution = new ResolutionController(renderer);
   const hud = new PerfHud(renderer);
@@ -102,6 +108,7 @@ async function main(): Promise<void> {
       if (camera.position.y < floor) camera.position.y = floor;
     }
 
+    fauna?.update(dt, camera.position);
     sky.tick(renderer);
     underwater.updateSun(sky.direction);
     oceanSim.update(renderer, dt);
@@ -134,7 +141,7 @@ async function main(): Promise<void> {
   });
 
   Object.assign(window, {
-    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials },
+    __reef: { scene, camera, renderer, controls, sky, oceanSim, ocean, resolution, hud, underwater, post, caustics, probe, state, targetGoal, reefMaterials, get fauna() { return fauna; } },
   });
 }
 
