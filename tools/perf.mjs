@@ -13,6 +13,7 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage();
 page.on('pageerror', (e) => console.log(`[pageerror] ${e.message}`));
 await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle0' });
+await page.evaluate(() => new Promise((res) => { const go = () => (window.__reef?.fauna ? res() : setTimeout(go, 200)); go(); }));
 await new Promise((r) => setTimeout(r, 2500));
 await page.evaluate((s) => {
   const r = window.__reef;

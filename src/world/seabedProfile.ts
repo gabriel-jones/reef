@@ -1,8 +1,8 @@
-import { HALF_X } from '../config';
+import { HALF_X, HALF_Z } from '../config';
 
 /**
- * Placeholder analytic seabed used until the Blender terrain lands in Phase 3.
- * Beach at -X, seagrass shallows, patch reef mid-slab, boiler reef ring near +X.
+ * Analytic seabed: beach at -X, seagrass shallows, patch reefs mid-slab, boiler reef ring near +X.
+ * Expensive to evaluate, so the app samples grids baked from it; rerun `npm run bake` after editing.
  */
 
 function hash(x: number, z: number): number {
@@ -87,7 +87,51 @@ function boilerRing(x: number, z: number): number {
   return Math.exp(-((r - BOILER.radius) ** 2) / (2 * BOILER.width ** 2));
 }
 
+/** Baked grids of the functions below (see tools/bake-seabed.mjs); null until loaded, or in the bake tool itself. */
+export interface BakedSeabed {
+  nx: number;
+  nz: number;
+  /** Samples per metre. */
+  res: number;
+  height: Float32Array;
+  reef: Float32Array;
+  grass: Float32Array;
+}
+
+let baked: BakedSeabed | null = null;
+
+export function useBakedSeabed(b: BakedSeabed | null): void {
+  baked = b;
+}
+
+function sample(b: BakedSeabed, grid: Float32Array, x: number, z: number): number {
+  const fx = Math.min(Math.max((x + HALF_X) * b.res, 0), b.nx - 1.001);
+  const fz = Math.min(Math.max((z + HALF_Z) * b.res, 0), b.nz - 1.001);
+  const i = Math.floor(fx);
+  const j = Math.floor(fz);
+  const u = fx - i;
+  const v = fz - j;
+  const o = j * b.nx + i;
+  const a = grid[o];
+  const c = grid[o + b.nx];
+  return a + (grid[o + 1] - a) * u + (c - a) * v + (a - grid[o + 1] - c + grid[o + b.nx + 1]) * u * v;
+}
+
 export function seabedHeight(x: number, z: number): number {
+  return baked ? sample(baked, baked.height, x, z) : analyticHeight(x, z);
+}
+
+/** 0 = bare sand, 1 = hard reef framework (patch-reef mounds and the boiler rim). */
+export function reefDensity(x: number, z: number): number {
+  return baked ? sample(baked, baked.reef, x, z) : analyticReef(x, z);
+}
+
+/** Turtle-grass meadow coverage in the shallows, 0..1. */
+export function seagrassDensity(x: number, z: number): number {
+  return baked ? sample(baked, baked.grass, x, z) : analyticGrass(x, z);
+}
+
+export function analyticHeight(x: number, z: number): number {
   const sx = shoreX(z);
 
   // Beach rises gently onto land, shallows fall away to the patch-reef floor.
@@ -105,22 +149,20 @@ export function seabedHeight(x: number, z: number): number {
   return base + (crest - base) * ring;
 }
 
-/** 0 = bare sand, 1 = hard reef framework (patch-reef mounds and the boiler rim). */
-export function reefDensity(x: number, z: number): number {
+export function analyticReef(x: number, z: number): number {
   const mound = smoothstep(1.1, 0.75, patchDistance(x, z).d);
   const boiler = smoothstep(0.25, 0.75, boilerRing(x, z));
   const breakup = fbm(x * 0.6 + 11, z * 0.6 - 5, 3);
   return Math.min(Math.max(Math.max(mound, boiler) * (0.85 + breakup * 0.6), 0), 1);
 }
 
-/** Turtle-grass meadow coverage in the shallows, 0..1. */
-export function seagrassDensity(x: number, z: number): number {
-  const depth = -seabedHeight(x, z);
+export function analyticGrass(x: number, z: number): number {
+  const depth = -analyticHeight(x, z);
   const band = smoothstep(0.4, 1.0, depth) * (1 - smoothstep(3.4, 4.4, depth));
   const patches = smoothstep(-0.3, 0.05, fbm(x * 0.07 - 2, z * 0.1 + 9, 4));
   // Meadows also ring the patch reefs at a sand halo's distance (grazers crop the halo itself).
   const halo = smoothstep(1.25, 1.6, patchDistance(x, z).d);
-  return band * patches * halo * (1 - reefDensity(x, z)) * (1 - smoothstep(-2, 6, x));
+  return band * patches * halo * (1 - analyticReef(x, z)) * (1 - smoothstep(-2, 6, x));
 }
 
 export { fbm, smoothstep };

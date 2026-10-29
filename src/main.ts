@@ -2,7 +2,9 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
 import { dot, fract, renderOutput, screenCoordinate, vec2, vec4 } from 'three/tsl';
-import { createRenderer, ResolutionController } from './core/renderer';
+import { createRenderer } from './core/renderer';
+import { QualityController, type Tier } from './core/quality';
+import { loadBakedSeabed } from './world/seabedBake';
 import { PerfHud } from './core/perfHud';
 import { HALF_X, HALF_Z } from './config';
 import { SkyAndSun } from './world/sky';
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
     return;
   }
 
+  const seabedReady = loadBakedSeabed();
   const container = document.getElementById('app')!;
   const scene = new THREE.Scene();
 
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
   controls.update();
 
   const sky = new SkyAndSun(scene);
+  await seabedReady;
   const seabedMap = new SeabedMap();
   const oceanParams = structuredClone(DEFAULT_OCEAN);
   const oceanSim = new OceanSim(oceanParams);
@@ -83,20 +87,39 @@ async function main(): Promise<void> {
   pipeline.outputNode = output;
   let captureNext = false;
 
+  // The ocean shows first; the reef compiles in the background and rises into place, then the fauna.
   let fauna: Fauna | null = null;
   let reefGroup: THREE.Group | null = null;
+  let tier: Tier | null = null;
+  let revealStart = -1;
+  const applyTier = (t: Tier) => {
+    tier = t;
+    ocean.setSpacing(t.surfaceSpacing);
+    const grass = reefGroup?.getObjectByName('seagrass') as THREE.InstancedMesh | undefined;
+    if (grass) grass.count = Math.round(grass.userData.total * t.seagrass);
+    fauna?.setBait(t.bait);
+  };
   createReef(reefMaterials)
-    .then(({ group, surfaces }) => {
+    .then(async ({ group, surfaces }) => {
       reefGroup = group;
+      reefMaterials.reveal.value = 0;
+      if (tier) applyTier(tier);
+      await renderer.compileAsync(group, camera, scene);
       scene.add(group);
-      return createFauna(underwater, surfaces);
-    })
-    .then((f) => {
+      resolution.settle(3000);
+      revealStart = performance.now();
+      const f = await createFauna(underwater, surfaces);
+      await renderer.compileAsync(f.group, camera, scene);
       fauna = f;
+      if (tier) applyTier(tier);
       scene.add(f.group);
-    });
+      resolution.settle(3000);
+    })
+    .catch((e) => console.error('reef failed to load', e));
 
-  const resolution = new ResolutionController(renderer);
+  const resolution = new QualityController({ setPixelRatio: (r) => renderer.setPixelRatio(r), applyTier });
+  const hasTimestamps = renderer.hasFeature('timestamp-query');
+  resolution.settle(4000);
   const hud = new PerfHud(renderer);
   const gui = createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
   const timeArc = createTimeArc(sky);
@@ -191,13 +214,18 @@ async function main(): Promise<void> {
   let adapted = renderer.toneMappingExposure;
 
   let resolving = false;
+  let lastFrame = -1e9;
   renderer.setAnimationLoop((now: number) => {
+    // Frame cap (30 on phones, 60 elsewhere), with a little slack for rAF jitter.
+    const sinceLast = now - lastFrame;
+    if (sinceLast < resolution.interval - 2.5) return;
+    lastFrame = now;
     const t0 = performance.now();
     timer.update(now);
     const dt = timer.getDelta();
     const frozen = photo.active;
 
-    if (!automated && !lifted && (fauna || now > 30000) && ++readyFrames > 20) {
+    if (!automated && !lifted && ++readyFrames > 8) {
       lifted = true;
       veil.classList.add('lifted');
       setTimeout(() => veil.remove(), 2500);
@@ -213,6 +241,12 @@ async function main(): Promise<void> {
       );
       camera.position.setFromSpherical(sph).add(home.target);
       if (k >= 1) intro = -1;
+    }
+
+    if (revealStart >= 0) {
+      const k = Math.min((performance.now() - revealStart) / 2800, 1);
+      reefMaterials.reveal.value = k;
+      if (k >= 1) revealStart = -1;
     }
 
     controls.target.lerp(targetGoal, 1 - Math.exp(-dt * 4));
@@ -278,7 +312,7 @@ async function main(): Promise<void> {
       });
     }
 
-    resolution.sample(hud.gpuMs || dt * 1000, now);
+    resolution.sample(hasTimestamps ? hud.gpuMs : 0, sinceLast, now);
     hud.frame(cpuMs, resolution.scale);
   });
 

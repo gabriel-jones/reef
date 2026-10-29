@@ -27,24 +27,29 @@ export function createFoamTexture(size = 256): THREE.DataTexture {
     };
   };
 
-  const fbm = (x: number, y: number, base: number, octaves: number, seed: number) => {
+  const fbm = (base: number, octaves: number, seed: number) => {
+    const layers = Array.from({ length: octaves }, (_, o) => ({ period: base << o, sample: lattice(base << o, seed + o * 101) }));
+    return (x: number, y: number) => fbmAt(layers, x, y);
+  };
+  const fbmAt = (layers: Array<{ period: number; sample: (x: number, y: number) => number }>, x: number, y: number) => {
     let sum = 0;
     let amp = 0.5;
     let norm = 0;
-    for (let o = 0; o < octaves; o++) {
-      const period = base << o;
-      sum += lattice(period, seed + o * 101)((x * period) / size, (y * period) / size) * amp;
+    for (const { period, sample } of layers) {
+      sum += sample((x * period) / size, (y * period) / size) * amp;
       norm += amp;
       amp *= 0.5;
     }
     return sum / norm;
   };
 
+  const coarse = fbm(8, 4, 11);
+  const fine = fbm(32, 3, 77);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = (y * size + x) * 4;
-      data[i] = Math.round(fbm(x, y, 8, 4, 11) * 255);
-      data[i + 1] = Math.round(fbm(x, y, 32, 3, 77) * 255);
+      data[i] = Math.round(coarse(x, y) * 255);
+      data[i + 1] = Math.round(fine(x, y) * 255);
       data[i + 2] = 0;
       data[i + 3] = 255;
     }

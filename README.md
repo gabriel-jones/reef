@@ -22,6 +22,7 @@ It needs a WebGPU browser: Chrome or Edge 113+, or Safari 18+. `npm run build` t
 | Speaker button | Ambient sound (off by default). |
 | Camera button or `P` | Photo mode: freezes fish and waves and adds depth of field. Click to focus, then Save for a full-resolution PNG. `Esc` exits. |
 | `` ` `` or `?dev` | Developer panel and performance HUD. |
+| `?quality=low\|mid\|high` | Force a quality tier (normally picked from the device and adjusted live). |
 
 ## How it works
 
@@ -35,6 +36,15 @@ It needs a WebGPU browser: Chrome or Edge 113+, or Safari 18+. `npm run build` t
   - a muffled rumble, snapping shrimp and bubbles underwater;
   - mixed by depth, distance from the shore and time of day.
 
+## Performance
+
+Quality tiers live in `src/core/quality.ts`:
+
+- **Starting tier.** Phones start low, tablets mid, and desktops by CPU core count.
+- **Frame-rate cap.** Phones are capped at 30 fps to stay cool; everything else at 60, so 120 Hz screens don't double the work.
+- **Live adjustment.** A controller lowers render resolution first. If that isn't enough, it drops a tier: less seagrass, fewer bait fish and a coarser ocean surface. Phones also simulate waves at half resolution.
+- **Loading.** The ocean appears first. The reef compiles its shaders in the background and rises out of the seabed, then the fish arrive.
+
 ## Assets
 
 Every model is built by a Python script running in Blender. There is no hand modelling and no AI generation.
@@ -43,6 +53,7 @@ Every model is built by a Python script running in Blender. There is no hand mod
 npm run assets:build        # blender/assets/*.py → assets/raw/*.glb (+ .blend sources); BLENDER=/path/to/blender
 npm run assets:optimize     # assets/raw → public/assets (meshopt, quantized)
 npm run assets:textures     # CC0 Poly Haven rock and sand texture sets → public/assets/textures
+npm run bake                # seabed height and density grids → public/assets/seabed.bin (rerun after editing seabedProfile.ts)
 ```
 
 Generated textures, such as brain coral, the sea fan lattice and fish patterns, come from `blender/textures` and the asset scripts. `tools/shot.mjs` takes headless screenshots for checking changes.

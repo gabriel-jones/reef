@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "assets:build": "node tools/build-assets.mjs",
     "assets:optimize": "node tools/optimize-assets.mjs",
-    "assets:textures": "node tools/fetch-textures.mjs"
+    "assets:textures": "node tools/fetch-textures.mjs",
+    "bake": "node tools/bake-seabed.mjs"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",

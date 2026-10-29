@@ -1,3 +1,4 @@
+import { startTier } from '../core/quality';
 export interface SpectrumParams {
   scale: number;
   windSpeed: number;
@@ -30,7 +31,8 @@ export const CASCADES = [
   { size: 9.3, kMin: (2 * Math.PI / 9.3) * 6, kMax: Infinity },
 ] as const;
 
-export const FFT_SIZE = 256;
+/** Phones simulate at half resolution (finest ripples go); fixed for the session. */
+export const FFT_SIZE = startTier() === 0 ? 128 : 256;
 
 /** Bermuda south-shore trade wind sea plus a long Atlantic swell from the southeast, landing on the beach at -X. */
 export const DEFAULT_OCEAN: OceanParams = {

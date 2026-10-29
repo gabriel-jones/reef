@@ -51,7 +51,6 @@ type Vec2Node = THREE.Node<'vec2'>;
 type Vec3Node = THREE.Node<'vec3'>;
 type Vec4Node = THREE.Node<'vec4'>;
 
-const SURFACE_SPACING = 1 / 6;
 const IOR_WATER = 1.333;
 const EDGE_FADE = 2;
 
@@ -107,13 +106,27 @@ export class OceanSurface {
   ) {
     this.shoalDepth.value = sim.params.shoalDepth;
     this.group.name = 'ocean';
-    const surface = new THREE.Mesh(this.buildSurfaceGeometry(), this.buildSurfaceMaterial());
-    surface.name = 'ocean-surface';
-    surface.frustumCulled = false;
-    const walls = new THREE.Mesh(this.buildWallGeometry(), this.buildWallMaterial());
-    walls.name = 'ocean-walls';
-    walls.frustumCulled = false;
-    this.group.add(surface, walls);
+    this.surface = new THREE.Mesh(this.buildSurfaceGeometry(), this.buildSurfaceMaterial());
+    this.surface.name = 'ocean-surface';
+    this.surface.frustumCulled = false;
+    this.walls = new THREE.Mesh(this.buildWallGeometry(), this.buildWallMaterial());
+    this.walls.name = 'ocean-walls';
+    this.walls.frustumCulled = false;
+    this.group.add(this.surface, this.walls);
+  }
+
+  private spacing = 1 / 6;
+  private surface: THREE.Mesh;
+  private walls: THREE.Mesh;
+
+  /** Vertex spacing of the surface mesh (m); coarser on weaker devices. */
+  setSpacing(spacing: number): void {
+    if (Math.abs(spacing - this.spacing) < 1e-6) return;
+    this.spacing = spacing;
+    this.surface.geometry.dispose();
+    this.surface.geometry = this.buildSurfaceGeometry();
+    this.walls.geometry.dispose();
+    this.walls.geometry = this.buildWallGeometry();
   }
 
   // ---------------------------------------------------------------- wave field
@@ -155,7 +168,7 @@ export class OceanSurface {
   // ---------------------------------------------------------------- geometry
 
   private buildSurfaceGeometry(): THREE.BufferGeometry {
-    const geo = new THREE.PlaneGeometry(WORLD.sizeX, WORLD.sizeZ, Math.round(WORLD.sizeX / SURFACE_SPACING), Math.round(WORLD.sizeZ / SURFACE_SPACING));
+    const geo = new THREE.PlaneGeometry(WORLD.sizeX, WORLD.sizeZ, Math.round(WORLD.sizeX / this.spacing), Math.round(WORLD.sizeZ / this.spacing));
     geo.rotateX(-Math.PI / 2);
     geo.translate(0, WORLD.seaLevel, 0);
     return geo;
@@ -174,7 +187,7 @@ export class OceanSurface {
     ];
     const offset = 0.01;
     for (const [x0, z0, x1, z1, nx, nz] of edges) {
-      const steps = Math.round(Math.hypot(x1 - x0, z1 - z0) / SURFACE_SPACING);
+      const steps = Math.round(Math.hypot(x1 - x0, z1 - z0) / this.spacing);
       const base = positions.length / 3;
       for (let i = 0; i <= steps; i++) {
         const t = i / steps;

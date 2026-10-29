@@ -116,6 +116,8 @@ class FishSchool {
   readonly agents: Agent[] = [];
   protected readonly swim: THREE.InstancedBufferAttribute;
   protected readonly orient: THREE.InstancedBufferAttribute;
+  /** Agents simulated and drawn; the rest are parked (quality scaling). */
+  active: number;
 
   constructor(geo: THREE.BufferGeometry, mats: FaunaMaterials, readonly name: string, readonly length: number, count: number) {
     geo = geo.clone();
@@ -125,6 +127,7 @@ class FishSchool {
     this.orient.setUsage(THREE.DynamicDrawUsage);
     const material = mats.fish(name, length, this.swim, this.orient);
     this.mesh = new THREE.InstancedMesh(geo, material, count);
+    this.active = count;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.name = `fish-${name}`;
     this.mesh.frustumCulled = false;
@@ -145,6 +148,11 @@ class FishSchool {
     this.mesh.setMatrixAt(i, _m);
     this.swim.setXYZW(i, a.phase, amp, a.scale, 0);
     this.orient.setXYZW(i, _q.x, _q.y, _q.z, _q.w);
+  }
+
+  setActive(n: number): void {
+    this.active = Math.min(Math.max(Math.round(n), 1), this.agents.length);
+    this.mesh.count = this.active;
   }
 
   protected flush(): void {
@@ -297,7 +305,9 @@ class BaitSchool extends FishSchool {
   readonly anchor = new THREE.Vector3();
   private anchorGoal = new THREE.Vector3();
   private anchorTimer = 0;
-  private readonly n: number;
+  private get n(): number {
+    return this.active;
+  }
   private readonly p: Float32Array;
   private readonly v: Float32Array;
   private readonly cellOf: Int32Array;
@@ -307,7 +317,6 @@ class BaitSchool extends FishSchool {
 
   constructor(geo: THREE.BufferGeometry, mats: FaunaMaterials, count: number, start: THREE.Vector3, private h: HeightField, private rnd: () => number) {
     super(geo, mats, 'bait', 0.09, count);
-    this.n = count;
     this.p = new Float32Array(count * 3);
     this.v = new Float32Array(count * 3);
     this.cellOf = new Int32Array(count);
@@ -546,6 +555,8 @@ async function vatGeometry(file: string): Promise<THREE.BufferGeometry> {
 export interface Fauna {
   group: THREE.Group;
   update(dt: number, camera: THREE.Vector3): void;
+  /** Fish per bait school (quality scaling). */
+  setBait(perSchool: number): void;
   /** Every swimmer's position, speed and body length, e.g. for bioluminescent wakes. */
   emit(fn: (x: number, y: number, z: number, speed: number, size: number, dt: number) => void, dt: number): void;
 }
@@ -627,10 +638,18 @@ export async function createFauna(underwater: UnderwaterLighting, surfaces: Reef
   const threats: THREE.Vector3[] = barracuda.map((b) => b.pos);
   const tmp = new THREE.Vector3();
 
+  const schools: FishSchool[] = [...reefSchools, ...bait];
   return {
     group,
+    setBait(perSchool) {
+      for (const s of bait) s.setActive(perSchool);
+    },
     emit(fn, dt) {
-      for (const s of [...reefSchools, ...bait]) for (const a of s.agents) fn(a.pos.x, a.pos.y, a.pos.z, a.vel.length(), s.length * a.scale, dt);
+      for (const s of schools)
+        for (let i = 0; i < s.active; i++) {
+          const a = s.agents[i];
+          fn(a.pos.x, a.pos.y, a.pos.z, a.vel.length(), s.length * a.scale, dt);
+        }
       for (const b of barracuda) fn(b.pos.x, b.pos.y, b.pos.z, b.vel.length(), 1.3, dt);
       fn(turtle.pos.x, turtle.pos.y, turtle.pos.z, turtle.vel.length() + 0.15, 1.0, dt);
     },

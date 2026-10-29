@@ -109,6 +109,17 @@ export class ReefMaterials {
     return this.currentDir.mul(s.mul(bend).mul(amplitude).mul(this.surge));
   }
 
+  /** 0 → 1 as the reef first appears: each instance rises out of the seabed, staggered. */
+  readonly reveal = uniform(1);
+  private risen = new WeakSet<THREE.NodeMaterial>();
+
+  rising(mat: THREE.NodeMaterial): void {
+    if (this.risen.has(mat)) return;
+    this.risen.add(mat);
+    const k = smoothstep(0, 1, this.reveal.sub(hash(instanceIndex).mul(0.6)).div(0.4).clamp());
+    mat.positionNode = ((mat.positionNode ?? positionLocal) as Vec3Node).sub(vec3(0, k.oneMinus().mul(1.6), 0));
+  }
+
   private finish<T extends THREE.NodeMaterial>(mat: T): T {
     this.underwater.apply(mat);
     return mat;

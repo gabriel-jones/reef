@@ -1,6 +1,6 @@
 import GUI from 'lil-gui';
 import type * as THREE from 'three/webgpu';
-import type { ResolutionController } from '../core/renderer';
+import { TIERS, type QualityController } from '../core/quality';
 import type { PerfHud } from '../core/perfHud';
 import type { SkyAndSun } from '../world/sky';
 import type { OceanSim } from '../ocean/oceanSim';
@@ -11,7 +11,7 @@ import type { Caustics } from '../underwater/caustics';
 
 export function createGui(opts: {
   renderer: THREE.WebGPURenderer;
-  resolution: ResolutionController;
+  resolution: QualityController;
   hud: PerfHud;
   sky: SkyAndSun;
   oceanSim: OceanSim;
@@ -78,17 +78,25 @@ export function createGui(opts: {
 
   const render = gui.addFolder('Render');
   render.add(sky.state, 'exposure', 0.05, 3, 0.01).onChange(() => sky.update());
-  render.add(resolution, 'enabled').name('auto resolution');
+  render.add(resolution, 'enabled').name('auto quality');
+  const tierProxy = { tier: resolution.current.name };
+  render
+    .add(tierProxy, 'tier', TIERS.map((t) => t.name))
+    .name('quality')
+    .listen()
+    .onChange((name: string) => resolution.changeTier(TIERS.findIndex((t) => t.name === name)));
   const scaleProxy = { scale: resolution.scale };
   render
     .add(scaleProxy, 'scale', 0.5, 2, 0.05)
     .name('pixel ratio')
     .listen()
     .onChange((v: number) => resolution.setScale(v));
-  render.add(resolution, 'targetMs', 8, 33, 0.5).name('budget ms');
   const hudProxy = { perfHud: true };
   render.add(hudProxy, 'perfHud').name('perf HUD').onChange((v: boolean) => (hud.visible = v));
-  setInterval(() => (scaleProxy.scale = resolution.scale), 500);
+  setInterval(() => {
+    scaleProxy.scale = resolution.scale;
+    tierProxy.tier = resolution.current.name;
+  }, 500);
 
   for (const f of [waves, foam, water, under]) f.close();
   return gui;
