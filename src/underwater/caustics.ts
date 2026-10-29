@@ -4,6 +4,8 @@ import { CASCADES, FFT_SIZE } from '../ocean/params';
 import type { OceanSim } from '../ocean/oceanSim';
 
 const N = FFT_SIZE;
+/** Size of the box-filtered copy used for god rays. */
+const SOFT = 64;
 const IOR_WATER = 1.333;
 
 /**
@@ -17,6 +19,12 @@ export class Caustics {
   readonly cascades = [1, 2] as const;
   /** Artistic focal depths: the gentle trade-wind sea would only focus tens of metres down. */
   readonly focusDepth = [uniform(13), uniform(5)];
+  /**
+   * Coarse cascade box-filtered to SOFT² and pre-raised to the shaft contrast curve. God rays march
+   * through this instead of the full-resolution pattern: a smooth integrand needs far fewer samples,
+   * so the per-pixel jitter stops showing as grain.
+   */
+  readonly soft: THREE.StorageTexture;
   private nodes: THREE.ComputeNode[] = [];
 
   constructor(private sim: OceanSim) {
@@ -30,6 +38,25 @@ export class Caustics {
       this.textures.push(tex);
       this.nodes.push(this.build(c, tex, this.focusDepth[i]));
     });
+    this.soft = new THREE.StorageTexture(SOFT, SOFT);
+    this.soft.type = THREE.HalfFloatType;
+    this.soft.format = THREE.RGBAFormat;
+    this.soft.wrapS = this.soft.wrapT = THREE.RepeatWrapping;
+    this.soft.minFilter = this.soft.magFilter = THREE.LinearFilter;
+    this.soft.generateMipmaps = false;
+    this.nodes.push(this.buildSoft(this.textures[0], this.soft));
+  }
+
+  private buildSoft(src: THREE.StorageTexture, out: THREE.StorageTexture): THREE.ComputeNode {
+    const block = N / SOFT;
+    return Fn(() => {
+      const x = instanceIndex.mod(uint(SOFT));
+      const y = instanceIndex.div(uint(SOFT));
+      const sum = float(0).toVar();
+      for (let j = 0; j < block; j++)
+        for (let i = 0; i < block; i++) sum.addAssign(textureLoad(src, ivec2(x.mul(uint(block)).add(uint(i)).toInt(), y.mul(uint(block)).add(uint(j)).toInt())).r.pow(2.2));
+      textureStore(out, uvec2(x, y), vec4(sum.div(block * block), 0, 0, 1)).toWriteOnly();
+    })().compute(SOFT * SOFT);
   }
 
   update(renderer: THREE.WebGPURenderer): void {

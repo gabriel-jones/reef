@@ -4,7 +4,6 @@ import {
   If,
   Loop,
   float,
-  vec2,
   vec3,
   vec4,
   uv,
@@ -12,7 +11,6 @@ import {
   texture,
   equirectUV,
   getViewPosition,
-  screenCoordinate,
   normalize,
   length,
   dot,
@@ -22,7 +20,6 @@ import {
   exp,
   pow,
   mix,
-  fract,
   smoothstep,
   select,
   PI,
@@ -105,9 +102,12 @@ export class UnderwaterPost {
         const fogged = color.rgb.mul(transmittance).add(inscatter.mul(vec3(1).sub(transmittance)));
 
         // God rays: march toward the scene, sampling the coarse caustic field projected up the refracted sun direction.
-        const rayLen = min(dist, this.maxRayDistance);
+        const toSea = float(WORLD.seaLevel).sub(cameraPosition.y).max(0).div(viewDir.y.max(1e-3));
+        const rayLen = min(min(dist, this.maxRayDistance), toSea);
         const dt = rayLen.div(RAY_STEPS);
-        const jitter = fract(float(52.9829189).mul(fract(dot(screenCoordinate.xy, vec2(0.06711056, 0.00583715)))));
+        // Midpoint samples, no per-pixel jitter: shafts are most of the water's brightness, so any
+        // jitter reads as grain, and the box-filtered beam is smooth enough not to band.
+        const jitter = float(0.5);
         const shafts = float(0).toVar();
         Loop(RAY_STEPS, ({ i }) => {
           const t = float(i).add(jitter).mul(dt);
@@ -115,9 +115,9 @@ export class UnderwaterPost {
           const d = max(float(WORLD.seaLevel).sub(p.y), 0);
           const toSurface = d.div(lu.y);
           const sp = p.xz.add(lu.xz.mul(toSurface));
-          const beam = texture(this.lighting.caustics.textures[0], sp.div(CASCADES[1].size)).r;
+          const beam = texture(this.lighting.caustics.soft, sp.div(CASCADES[1].size)).r;
           const atten = exp(look.absorption.y.mul(toSurface.add(t)).negate());
-          shafts.addAssign(pow(beam, 2.2).mul(atten).mul(smoothstep(0.0, 0.6, d)));
+          shafts.addAssign(beam.mul(atten).mul(smoothstep(0.0, 0.6, d)));
         });
         const rayLight = this.sky.sunRadiance
           .mul(look.deepColor.add(vec3(0.02, 0.06, 0.05)))

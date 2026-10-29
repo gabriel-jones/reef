@@ -42,8 +42,8 @@ Quality tiers live in `src/core/quality.ts`:
 
 - **Starting tier.** Phones start low, tablets mid, and desktops by CPU core count.
 - **Frame-rate cap.** Phones are capped at 30 fps to stay cool; everything else at 60, so 120 Hz screens don't double the work.
-- **Live adjustment.** A controller lowers render resolution first. If that isn't enough, it drops a tier: less seagrass, fewer bait fish and a coarser ocean surface. Phones also simulate waves at half resolution.
-- **Loading.** The ocean appears first. The reef compiles its shaders in the background and rises out of the seabed, then the fish arrive.
+- **Live adjustment.** A controller lowers render resolution first. If that isn't enough, it drops a tier: less seagrass, fewer bait fish and a coarser ocean surface. Phones also simulate waves at half resolution. It changes things rarely, because every resolution change reallocates the render targets and causes a hitch. It lowers after 2 slow seconds and raises after 8 fast ones. If a raise fails, it won't try again for a minute. Without GPU timers (Safari), it never goes above the starting resolution.
+- **Loading.** A veil stays up while the reef and fish load and compile their shaders. It lifts once frames are steady, so the first-frame pipeline builds happen out of sight.
 
 ## Assets
 

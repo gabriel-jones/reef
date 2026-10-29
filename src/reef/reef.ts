@@ -50,8 +50,7 @@ export async function variantGeometries(file: string, prefix: string): Promise<T
   return found.map((f) => f.geo);
 }
 
-function instanced(geo: THREE.BufferGeometry, material: THREE.Material, list: Placement[], name: string, castShadow: boolean, materials: ReefMaterials): THREE.InstancedMesh {
-  materials.rising(material as THREE.NodeMaterial);
+function instanced(geo: THREE.BufferGeometry, material: THREE.Material, list: Placement[], name: string, castShadow: boolean): THREE.InstancedMesh {
   const mesh = new THREE.InstancedMesh(geo, material, Math.max(list.length, 1));
   mesh.name = name;
   list.forEach((p, i) => {
@@ -123,7 +122,7 @@ function seagrass(materials: ReefMaterials, rnd: () => number, terrain: HeightFi
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rnd() * Math.PI * 2);
     list.push({ variant: 0, matrix: new THREE.Matrix4().compose(new THREE.Vector3(x, seabedHeight(x, z) - 0.02, z), q, new THREE.Vector3(s, s * (0.8 + rnd() * 0.5), s)) });
   }
-  const mesh = instanced(geo, materials.seagrass(), list, 'seagrass', false, materials);
+  const mesh = instanced(geo, materials.seagrass(), list, 'seagrass', false);
   // Placement order is random, so drawing a prefix thins the meadow evenly.
   mesh.userData.total = list.length;
   return mesh;
@@ -239,7 +238,7 @@ export async function createReef(materials: ReefMaterials, seed = 4242): Promise
     }
     variants.forEach((geo, vi) => {
       const list = placements.filter((p) => p.variant === vi);
-      if (list.length) group.add(instanced(geo, f.material, list, `${f.prefix}${vi}`, f.castShadow ?? true, materials));
+      if (list.length) group.add(instanced(geo, f.material, list, `${f.prefix}${vi}`, f.castShadow ?? true));
     });
   });
   group.add(seagrass(materials, rnd, terrain));

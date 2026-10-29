@@ -87,11 +87,11 @@ async function main(): Promise<void> {
   pipeline.outputNode = output;
   let captureNext = false;
 
-  // The ocean shows first; the reef compiles in the background and rises into place, then the fauna.
+  // The reef and fauna load and compile behind the veil; it lifts once everything is in and frames are steady.
   let fauna: Fauna | null = null;
   let reefGroup: THREE.Group | null = null;
   let tier: Tier | null = null;
-  let revealStart = -1;
+  let loaded = false;
   const applyTier = (t: Tier) => {
     tier = t;
     ocean.setSpacing(t.surfaceSpacing);
@@ -102,23 +102,25 @@ async function main(): Promise<void> {
   createReef(reefMaterials)
     .then(async ({ group, surfaces }) => {
       reefGroup = group;
-      reefMaterials.reveal.value = 0;
       if (tier) applyTier(tier);
       await renderer.compileAsync(group, camera, scene);
       scene.add(group);
-      resolution.settle(3000);
-      revealStart = performance.now();
       const f = await createFauna(underwater, surfaces);
       await renderer.compileAsync(f.group, camera, scene);
       fauna = f;
       if (tier) applyTier(tier);
       scene.add(f.group);
       resolution.settle(3000);
+      loaded = true;
     })
-    .catch((e) => console.error('reef failed to load', e));
+    .catch((e) => {
+      console.error('reef failed to load', e);
+      loaded = true;
+    });
 
   const resolution = new QualityController({ setPixelRatio: (r) => renderer.setPixelRatio(r), applyTier });
   const hasTimestamps = renderer.hasFeature('timestamp-query');
+  resolution.timestamps = hasTimestamps;
   resolution.settle(4000);
   const hud = new PerfHud(renderer);
   const gui = createGui({ renderer, resolution, hud, sky, oceanSim, ocean, underwater, post, caustics });
@@ -194,7 +196,11 @@ async function main(): Promise<void> {
   const homeSph = new THREE.Spherical().setFromVector3(home.position.clone().sub(home.target));
   const startSph = new THREE.Spherical(homeSph.radius * 1.7, homeSph.phi - 0.22, homeSph.theta + 0.75);
   let intro = automated ? -1 : 0;
-  let readyFrames = 0;
+  // Frames since loading finished, and how many of the latest ran on time: the first frames with
+  // everything in still build shadow and other pipelines that compileAsync can't reach.
+  let loadedFrames = 0;
+  let steadyFrames = 0;
+  const veilDeadline = performance.now() + 20000;
   let lifted = automated;
   if (automated) veil.remove();
   else camera.position.setFromSpherical(startSph).add(home.target);
@@ -215,17 +221,25 @@ async function main(): Promise<void> {
 
   let resolving = false;
   let lastFrame = -1e9;
+  let nextFrame = 0;
   renderer.setAnimationLoop((now: number) => {
-    // Frame cap (30 on phones, 60 elsewhere), with a little slack for rAF jitter.
+    // Frame cap (30 on phones, 60 elsewhere). The schedule advances by whole intervals so rAF jitter
+    // averages out instead of occasionally skipping a slot; it resets after a stall.
+    const interval = resolution.interval;
+    if (now < nextFrame - interval * 0.3) return;
+    nextFrame = now - nextFrame > interval ? now + interval : nextFrame + interval;
     const sinceLast = now - lastFrame;
-    if (sinceLast < resolution.interval - 2.5) return;
     lastFrame = now;
     const t0 = performance.now();
     timer.update(now);
     const dt = timer.getDelta();
     const frozen = photo.active;
 
-    if (!automated && !lifted && ++readyFrames > 8) {
+    if (loaded) {
+      loadedFrames++;
+      steadyFrames = sinceLast < interval * 1.6 ? steadyFrames + 1 : 0;
+    }
+    if (!automated && !lifted && ((loadedFrames > 20 && steadyFrames > 12) || now > veilDeadline)) {
       lifted = true;
       veil.classList.add('lifted');
       setTimeout(() => veil.remove(), 2500);
@@ -241,12 +255,6 @@ async function main(): Promise<void> {
       );
       camera.position.setFromSpherical(sph).add(home.target);
       if (k >= 1) intro = -1;
-    }
-
-    if (revealStart >= 0) {
-      const k = Math.min((performance.now() - revealStart) / 2800, 1);
-      reefMaterials.reveal.value = k;
-      if (k >= 1) revealStart = -1;
     }
 
     controls.target.lerp(targetGoal, 1 - Math.exp(-dt * 4));
