@@ -39,9 +39,20 @@ function dithered(color: THREE.Node<'vec4'>): THREE.Node<'vec4'> {
   return vec4(color.rgb.add(ign(0).add(ign(5.588238)).sub(1).div(255)), 1);
 }
 
+function showNotice(title?: string, detail?: string): void {
+  document.getElementById('veil')?.remove();
+  const notice = document.getElementById('unsupported')!;
+  if (title) notice.querySelector('h1')!.textContent = title;
+  if (detail) notice.querySelector('p')!.textContent = detail;
+  notice.hidden = false;
+}
+
 async function main(): Promise<void> {
-  if (!navigator.gpu) {
-    document.getElementById('unsupported')!.hidden = false;
+  // navigator.gpu exists on many phones that have no usable adapter; three would then fall back
+  // to WebGL2, which can't run the ocean's storage-texture compute passes.
+  const adapter = await navigator.gpu?.requestAdapter().catch(() => null);
+  if (!adapter) {
+    showNotice();
     return;
   }
 
@@ -53,6 +64,11 @@ async function main(): Promise<void> {
   camera.position.set(62, 34, 82);
 
   const { renderer, pipeline, scenePass } = await createRenderer(container, scene, camera);
+  if (!(renderer.backend as { isWebGPUBackend?: boolean }).isWebGPUBackend) {
+    renderer.domElement.remove();
+    showNotice();
+    return;
+  }
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, -3, 0);
@@ -321,4 +337,7 @@ async function main(): Promise<void> {
   });
 }
 
-main();
+main().catch((e: unknown) => {
+  console.error(e);
+  showNotice('Reef failed to start', e instanceof Error ? e.message : String(e));
+});
