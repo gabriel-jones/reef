@@ -19,8 +19,10 @@ body {
   inset: 0;
   display: grid;
   place-content: center;
+  padding: 24px;
   text-align: center;
   color: #cfe8ee;
+  z-index: 40;
 }
 
 #unsupported[hidden] {
